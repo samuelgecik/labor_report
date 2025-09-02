@@ -15,10 +15,10 @@ def analyze_excel_file(filename, file_description):
         print(f"\nColumn names:")
         for i, col in enumerate(df.columns, 1):
             print(f"  {i}. {col}")
-        
-        print(f"\nFirst 5 rows:")
-        print(df.head())
-        
+
+        print(f"\nFirst 20 rows:")
+        print(df.head(20))
+
         print(f"\nData types:")
         print(df.dtypes)
         
