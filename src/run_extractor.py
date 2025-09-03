@@ -8,23 +8,18 @@ from excel_extractor.main import extract_data
 # --- Source File Extraction (ronec_dochadzka.xlsx) ---
 print("--- Extracting from ronec_dochadzka.xlsx ---")
 
-# Define column mappings for the source file.
-# 'date' corresponds to 'Dátum' and 'hours' to 'odpracovaný čas'.
-source_mappings = {'date': ['Dátum'], 'hours': ['odpracovaný čas']}
 
 # Define new headers for CSV
 headers = ['Datum', 'Dochadzka_Prichod', 'Dochadzka_Odchod', 'Prestavka_min', 'Prerusenie_Odchod', 'Prerusenie_Prichod', 'Skutocny_Odpracovany_Cas']
 
-# The data starts 2 rows below the header row.
-header_row_offset = 2
-
+# The header row is dynamically located by searching for "Dátum".
 # Call the extraction function with the specified parameters.
 source_data = extract_data(
-    file_path='ronec_dochadzka.xlsx',
-    column_mappings=source_mappings,
-    header_row_offset=header_row_offset,
-    stop_condition=lambda val: isinstance(val, str),
-    extract_range=True
+    file_path='data/input/ronec_dochadzka.xlsx',
+    header_text="Dátum",
+    header_row_offset=2,
+    extract_range=True,
+    num_columns=7
 )
 
 # Write to CSV
@@ -42,12 +37,8 @@ print("-" * 40)
 # --- Target File Extraction (ronec_vykaz.xlsx) ---
 print("\n--- Extracting from ronec_vykaz.xlsx ---")
 
-# Define column mappings for the target file.
-# 'date' corresponds to 'Dátum' and 'total' to 'SPOLU'.
-target_mappings = {'date': ['Dátum'], 'total': ['SPOLU']}
-
 # Define new headers for target CSV
-target_headers = ['Datum', 'Cas_Vykonu_Od', 'Cas_Vykonu_Do', 'Prestavka_Od', 'Prestavka_Do', 'Prestavka_Trvanie', 'Popis_Cinnosti', 'Pocet_Odpracovanych_Hodin', 'Miesto_Vykonu', 'Pocet_Hodin_Projekt_POO', 'Pocet_Hodin_Riesenie_POO', 'Pocet_Hodin_Projekt_POO', 'SPOLU']
+target_headers = ['Datum', 'Cas_Vykonu_Od', 'Cas_Vykonu_Do', 'Prestavka_Trvanie', 'Popis_Cinnosti', 'Pocet_Odpracovanych_Hodin', 'Miesto_Vykonu', 'PH_Projekt_POO', 'PH_Riesenie_POO', 'PH_Mimo_Projekt_POO', 'SPOLU']
 
 # Define a strategy to find the start row.
 # In this case, the data always begins at row 26.
@@ -55,11 +46,11 @@ start_row_strategy = lambda header_row: 26
 
 # Call the extraction function with the specified parameters.
 target_data = extract_data(
-    file_path='ronec_vykaz.xlsx',
-    column_mappings=target_mappings,
+    file_path='data/input/ronec_vykaz.xlsx',
     extract_range=True,
     start_row_strategy=start_row_strategy,
-    stop_condition=lambda val: val == 'Čestné vyhlásenie: '
+    stop_condition=lambda val: val == 'Čestné vyhlásenie: ',
+    num_columns=11
 )
 
 # Write to CSV
