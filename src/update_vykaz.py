@@ -86,6 +86,69 @@ def transform_and_map_data(df_source, project):
 
     return df_target
 
+def load_target_excel(target_excel):
+    expected_headers = ['Datum', 'Cas_Vykonu_Od', 'Cas_Vykonu_Do', 'Prestavka_Trvanie', 'Popis_Cinnosti', 'Pocet_Odpracovanych_Hodin', 'Miesto_Vykonu', 'PH_Projekt_POO', 'PH_Riesenie_POO', 'PH_Mimo_Projekt_POO', 'SPOLU']
+    try:
+        wb = load_workbook(target_excel)
+        print(f"Available sheets in {target_excel}: {wb.sheetnames}")
+        sheet_name = 'Vykaz' if 'ronec' not in target_excel else 'Ing. Simon Ronec'
+        try:
+            ws = wb[sheet_name]
+        except KeyError:
+            print(f"Error: Sheet 'Vykaz' not found in {target_excel}. Please ensure the sheet exists and is named 'Vykaz'. Available sheets: {wb.sheetnames}")
+            return None, None
+
+        # Verify structure: Check rows for expected headers
+        header_row = None
+        for row_num in range(1, 34):  # Check rows 1 to 33
+            headers = []
+            for col in range(1, len(expected_headers) + 1):
+                cell = ws.cell(row=row_num, column=col)
+                if cell.value and isinstance(cell.value, str):
+                    headers.append(cell.value.strip())
+                else:
+                    headers.append('')
+
+            if headers == expected_headers:
+                header_row = row_num
+                break
+            print(f"Row {row_num} headers: {headers[:5]}...")  # Print first 5
+
+        if header_row is None:
+            print("Error: Expected headers not found in first 33 rows.")
+            return None, None
+
+        print(f"Headers found in row {header_row}")
+        # Adjust for header row
+        if header_row != 1:
+            print(f"Error: Headers expected in row 1, but found in row {header_row}. Please ensure the sheet starts with headers in row 1.")
+            return None, None
+
+        # Ensure ws.max_row >= 33
+        if ws.max_row < 33:
+            print(f"Error: Expected at least 33 rows, but found {ws.max_row}.")
+            return None, None
+
+        # Note merged cells for preservation
+        if ws.merged_cells:
+            print(f"Note: Merged cells in worksheet: {ws.merged_cells}. Formatting will be preserved during value updates.")
+
+        # Preserve formatting: Only cell values will be updated, not styles.
+        # If summary row (33) has formulas, note for later recalculation but do not change yet.
+        # Note: This function only loads and verifies; no modifications yet.
+
+        return wb, ws
+
+    except FileNotFoundError:
+        print(f"Error: Target Excel file not found: {target_excel}")
+        return None, None
+    except PermissionError:
+        print(f"Error: Target Excel file is locked or permission denied: {target_excel}. Please close the file if open and try again.")
+        return None, None
+    except Exception as e:
+        print(f"Unexpected error loading Excel: {e}")
+        return None, None
+
 def main():
     # Parse command line arguments with hardcoded defaults
     parser = argparse.ArgumentParser(description='Update Vykaz Script')
@@ -153,6 +216,12 @@ def main():
         # Step 3: Transform and Map Data
         df_target = transform_and_map_data(df_source, project)
         print("Transform and Map Data completed successfully.")
+
+        # Step 4: Load and Prepare Target Excel Structure
+        wb, ws = load_target_excel(target_excel)
+        if wb is None or ws is None:
+            exit(1)
+        print("Load and Prepare Target Excel Structure completed successfully.")
 
     except ImportError as e:
         print(f"Import error: {e}")
