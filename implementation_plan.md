@@ -53,13 +53,13 @@ This plan synthesizes the analysis from update_analysis.md into a detailed, step
   - [x] Preserve formatting: Do not modify styles; only update cell values. If summary row has formulas, note for recalculation. Mention merged cells/styles preserved.
   - [x] Error Handling: If sheet not found or file locked, log error and suggest manual open.
 
-- [ ] 5. **Update Daily Rows in Excel**
-  - [ ] Align data: For i in range(31): target_row = i + 26 (Excel rows 26-56, after headers in 24-25).
-  - [ ] Map to cells: Assuming columns A= Dátum (1), B= Čas výkonu od (2), ..., K= SPOLU (11). Set `ws.cell(row=target_row, column=col_num, value=df_target.iloc[i][col_name])`.
-  - [ ] Overwrite selectively: Clear only data columns (B-K) if existing values conflict, but retain Dátum if unchanged.
-  - [ ] Handle empties: Use '' for empty strings, '00:00:00' for zero times; ensure time cells are formatted as time if possible (via openpyxl styles, but minimally).
-  - [ ] Special Considerations: For vacation, ensure Popis_Cinnosti is exactly "DOVOLENKA" (uppercase). Do not touch other sheets.
-  - [ ] Error Handling: IndexError if row mismatch; validate post-update by reading back values.
+- [x] 5. **Update Daily Rows in Excel**
+  - [x] Align data: For i in range(31): target_row = i + 26 (Excel rows 26-56, after headers in 24-25).
+  - [x] Map to cells: Assuming columns A= Dátum (1), B= Čas výkonu od (2), ..., K= SPOLU (11). Set `ws.cell(row=target_row, column=col_num, value=df_target.iloc[i][col_name])`.
+  - [x] Overwrite selectively: Clear only data columns (B-K) if existing values conflict, but retain Dátum if unchanged.
+  - [x] Handle empties: Use '' for empty strings, '00:00:00' for zero times; ensure time cells are formatted as time if possible (via openpyxl styles, but minimally).
+  - [x] Special Considerations: For vacation, ensure Popis_Cinnosti is exactly "DOVOLENKA" (uppercase). Do not touch other sheets.
+  - [x] Error Handling: IndexError if row mismatch; validate post-update by reading back values.
 
 - [ ] 6. **Recalculate and Update Summary Row**
   - [ ] Compute summary: Count non-absent days (`work_days = len(df_target[df_target['SPOLU'] != '00:00:00'])`), sum hours (parse HH:MM:SS to timedelta, sum, format back: e.g., total_days + ', ' + total_hours).
@@ -69,7 +69,7 @@ This plan synthesizes the analysis from update_analysis.md into a detailed, step
   - [ ] Error Handling: timedelta parsing errors → default to '0 days, 00:00:00'; log discrepancies.
 
 - [ ] 7. **Save Changes and Final Validation**
-  - [ ] Save workbook: `wb.save('data/input/ronec_vykaz.xlsx')`.
+  - [ ] Save workbook: `wb.save('data/output/ronec_vykaz.xlsx')`.
   - [ ] Optional: Generate a transformed CSV (`df_target.to_csv('transformed_data.csv')`) for audit.
   - [ ] Cleanup: Close workbook.
   - [ ] Error Handling: Permission errors on save → suggest closing Excel; rollback to backup if update fails midway.

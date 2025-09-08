@@ -4,6 +4,7 @@ import tempfile
 import os
 from datetime import datetime, timedelta
 import shutil
+from update_vykaz import update_daily_rows, transform_and_map_data
 
 # Mock the argparser and other setup for testing
 def mock_args(project='ronec', month=7, year=2025):
@@ -332,6 +333,69 @@ class TestLoadTargetExcel:
         wb, ws = load_target_excel(temp_excel + '_nonexistent')
         assert wb is None
         assert ws is None  # Test FileNotFound
+
+class TestUpdateDailyRows:
+    @pytest.fixture
+    def temp_excel_with_data(self):
+        # Create Excel with headers and some pre-existing data in rows 26-56
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.xlsx', delete=False) as tmp:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = 'Vykaz'
+            # Headers in row 1
+            expected_headers = ['Datum', 'Cas_Vykonu_Od', 'Cas_Vykonu_Do', 'Prestavka_Trvanie', 'Popis_Cinnosti', 'Pocet_Odpracovanych_Hodin', 'Miesto_Vykonu', 'PH_Projekt_POO', 'PH_Riesenie_POO', 'PH_Mimo_Projekt_POO', 'SPOLU']
+            for col, header in enumerate(expected_headers, 1):
+                ws.cell(row=1, column=col, value=header)
+
+            # Pre-existing data: set some values in rows 26-56, e.g., old dates and values
+            for r in range(26, 57):  # rows 26 to 56
+                for c in range(1, 12):
+                    ws.cell(row=r, column=c, value=f"old{r}.{c}")
+
+            wb.save(tmp.name)
+        yield tmp.name
+        os.unlink(tmp.name)
+
+    @pytest.fixture
+    def sample_df_target(self):
+        # Create sample df_source
+        data = pd.DataFrame({
+            'Datum': pd.to_datetime(['2025-07-01', '2025-07-02', '2025-07-03', '2025-07-04']),
+            'Dochadzka_Prichod': ['Dovolenka', '-', '09:00:00', '08:00:00'],
+            'Dochadzka_Odchod': ['-', '17:00:00', '17:00:00', '16:00:00'],
+            'Prestavka_min': ['-', '45', '60', '30'],
+            'Skutocny_Odpracovany_Cas': ['08:00:00', '-', '08:00:00', '08:00:00']
+        })
+        # For 31 rows, but we can fill up to 31 in transform
+        df_target = transform_and_map_data(data, 'ronec')
+        return df_target
+
+    def test_update_success(self, temp_excel_with_data, sample_df_target):
+        # Load workbook
+        from openpyxl import load_workbook
+        wb = load_workbook(temp_excel_with_data)
+        ws = wb.active
+
+        # Call update
+        update_daily_rows(ws, sample_df_target)
+
+        # Assert changes
+        target_row = 26
+        assert ws.cell(row=target_row, column=1).value == '1.'
+        assert ws.cell(row=target_row, column=2).value == '09:00:00'  # Vacation Cas_Vykonu_Od
+        assert ws.cell(row=target_row, column=5).value == 'DOVOLENKA'
+
+        # Second row (absent)
+        target_row = 27
+        assert ws.cell(row=target_row, column=1).value == '2.'
+        assert ws.cell(row=target_row, column=2).value == ''
+        assert ws.cell(row=target_row, column=5).value == ''
+
+        # Third row (work day)
+        target_row = 28
+        assert ws.cell(row=target_row, column=1).value == '3.'
+        assert ws.cell(row=target_row, column=2).value == '09:00:00'
+        assert ws.cell(row=target_row, column=5).value == 'Podieľanie sa na realizácii pracovného balíka č. 1 s názvom: Analýza užívateľských potrieb a návrh konceptu riešenia, pracovného balíka č. 2 s názvom: Získavanie a spracovanie dát na tréning AI modelu a pracovného balíka č. 3 s názvom: Experimentálny vývoj a tréning AI modelu [role-specific addition]'
 
 if __name__ == "__main__":
     pytest.main([__file__])

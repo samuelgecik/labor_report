@@ -3,6 +3,9 @@ import shutil
 from datetime import datetime, timedelta
 import pandas as pd
 from openpyxl import load_workbook
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 def transform_and_map_data(df_source, project):
     activity_templates = {
@@ -149,6 +152,61 @@ def load_target_excel(target_excel):
         print(f"Unexpected error loading Excel: {e}")
         return None, None
 
+def update_daily_rows(ws, df_target):
+    col_mappings = {
+        'Datum': 1,
+        'Cas_Vykonu_Od': 2,
+        'Cas_Vykonu_Do': 3,
+        'Prestavka_Trvanie': 4,
+        'Popis_Cinnosti': 5,
+        'Pocet_Odpracovanych_Hodin': 6,
+        'Miesto_Vykonu': 7,
+        'PH_Projekt_POO': 8,
+        'PH_Riesenie_POO': 9,
+        'PH_Mimo_Projekt_POO': 10,
+        'SPOLU': 11
+    }
+
+    try:
+        for i in range(31):
+            target_row = 26 + i
+            expected_date = df_target.iloc[i]['Datum']
+            current_date = ws.cell(row=target_row, column=1).value
+            if current_date != expected_date:
+                ws.cell(row=target_row, column=1, value=expected_date)
+
+            for col_name, col_num in col_mappings.items():
+                if col_name == 'Datum':
+                    continue  # already handled
+                val = df_target.iloc[i][col_name]
+                if pd.isna(val) or val == '-':
+                    val = ''
+                # Ensure vacation Popis_Cinnosti is uppercase, but it's already set in df_target
+                ws.cell(row=target_row, column=col_num, value=val)
+
+    except IndexError as e:
+        logging.error(f"IndexError during row update at row {target_row}: {e}")
+    except Exception as e:
+        logging.error(f"Unexpected error during row update: {e}")
+
+    # Validation: read back sample rows (26 and 56)
+    try:
+        sample_indices = [0, 30]
+        target_rows = [26, 56]
+        discrepancies = []
+        for idx, trow in zip(sample_indices, target_rows):
+            actual_vals = {col_name: ws.cell(row=trow, column=col_num).value for col_name, col_num in col_mappings.items()}
+            expected_vals = df_target.loc[idx, col_mappings.keys()]
+            for col_name in col_mappings:
+                if actual_vals[col_name] != expected_vals[col_name]:
+                    discrepancies.append(f"Row {trow}, col {col_name}: expected {expected_vals[col_name]}, got {actual_vals[col_name]}")
+        if discrepancies:
+            logging.warning(f"Validation discrepancies: {'; '.join(discrepancies)}")
+        else:
+            logging.info("Validation completed successfully: no discrepancies found.")
+    except Exception as e:
+        logging.error(f"Validation error: {e}")
+
 def main():
     # Parse command line arguments with hardcoded defaults
     parser = argparse.ArgumentParser(description='Update Vykaz Script')
@@ -222,6 +280,10 @@ def main():
         if wb is None or ws is None:
             exit(1)
         print("Load and Prepare Target Excel Structure completed successfully.")
+
+        # Step 5: Update Daily Rows in Excel
+        update_daily_rows(ws, df_target)
+        print("Update Daily Rows in Excel completed successfully.")
 
     except ImportError as e:
         print(f"Import error: {e}")
