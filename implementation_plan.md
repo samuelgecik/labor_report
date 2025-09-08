@@ -35,17 +35,17 @@ This plan synthesizes the analysis from update_analysis.md into a detailed, step
   - [x] Clean data: Replace any NaN in numeric fields (e.g., `Prestavka_min`) with '-' for consistency.
   - [x] Error Handling: Use try-except for parsing errors (e.g., malformed dates); log invalid rows and suggest manual review.
 
-- [ ] 3. **Transform and Map Data**
-  - [ ] Initialize target DataFrame: Create `df_target` with columns matching the target structure (Datum, Cas_Vykonu_Od, Cas_Vykonu_Do, Prestavka_Trvanie, Popis_Cinnosti, Pocet_Odpracovanych_Hodin, Miesto_Vykonu, PH_Projekt_POO, PH_Riesenie_POO, PH_Mimo_Projekt_POO, SPOLU) and 31 rows (exclude header/summary for now).
-  - [ ] Extract day numbers: `df_target['Datum'] = df_source['Datum'].dt.day.astype(str) + '.'`.
-  - [ ] Classify rows: For each row, check `Dochadzka_Prichod`: 'Dovolenka' → vacation, '-' → absent, else → work day.
-  - [ ] Apply conditional mappings (per proposed field mappings):
-    - [ ] **Vacation ("Dovolenka")**: Set Cas_Vykonu_Od = '09:00:00', Cas_Vykonu_Do = '17:00:00', Prestavka_Trvanie = '', Popis_Cinnosti = 'DOVOLENKA', Pocet_Odpracovanych_Hodin = df_source['Skutocny_Odpracovany_Cas'] (or default '08:00:00' if '-'), Miesto_Vykonu = '', PH_* = '00:00:00', SPOLU = Pocet_Odpracovanych_Hodin.
-    - [ ] **Absent ("-")**: Set Cas_Vykonu_Od/Do = '', Prestavka_Trvanie = '00:00:00', Popis_Cinnosti = '', Pocet_Odpracovanych_Hodin = '00:00:00', Miesto_Vykonu = '', PH_* = '00:00:00', SPOLU = '00:00:00'.
-    - [ ] **Work Day**: Set Cas_Vykonu_Od = df_source['Dochadzka_Prichod'], Cas_Vykonu_Do = df_source['Dochadzka_Odchod'], Prestavka_Trvanie = convert minutes (pd.to_timedelta(df_source['Prestavka_min'], unit='min').dt.strftime('%H:%M:%S') or '00:00:00' if invalid), Popis_Cinnosti = activity_templates[project], Pocet_Odpracovanych_Hodin = df_source['Skutocny_Odpracovany_Cas'], Miesto_Vykonu = 'Bratislava', PH_* = '00:00:00', SPOLU = Pocet_Odpracovanych_Hodin.
-  - [ ] Handle edge cases: For vacation/absent breaks or times, ensure empty strings where appropriate (not '00:00:00' unless hours). Ignore interruptions unless net time seems incorrect (optional validation: recalculate worked time if needed).
-  - [ ] Configurability: Use the template dict to swap descriptions for sadecky (e.g., omit package 3, add role-specific text).
-  - [ ] Error Handling: Try-except for timedelta conversions (e.g., invalid minutes → log and set '00:00:00'); validate time formats (HH:MM:SS).
+- [x] 3. **Transform and Map Data**
+  - [x] Initialize target DataFrame: Create `df_target` with columns matching the target structure (Datum, Cas_Vykonu_Od, Cas_Vykonu_Do, Prestavka_Trvanie, Popis_Cinnosti, Pocet_Odpracovanych_Hodin, Miesto_Vykonu, PH_Projekt_POO, PH_Riesenie_POO, PH_Mimo_Projekt_POO, SPOLU) and 31 rows (exclude header/summary for now).
+  - [x] Extract day numbers: `df_target['Datum'] = df_source['Datum'].dt.day.astype(str) + '.'`.
+  - [x] Classify rows: For each row, check `Dochadzka_Prichod`: 'Dovolenka' → vacation, '-' → absent, else → work day.
+  - [x] Apply conditional mappings (per proposed field mappings):
+    - [x] **Vacation ("Dovolenka")**: Set Cas_Vykonu_Od = '09:00:00', Cas_Vykonu_Do = '17:00:00', Prestavka_Trvanie = '', Popis_Cinnosti = 'DOVOLENKA', Pocet_Odpracovanych_Hodin = df_source['Skutocny_Odpracovany_Cas'] (or default '08:00:00' if '-'), Miesto_Vykonu = '', PH_* = '00:00:00', SPOLU = Pocet_Odpracovanych_Hodin.
+    - [x] **Absent ("-")**: Set Cas_Vykonu_Od/Do = '', Prestavka_Trvanie = '00:00:00', Popis_Cinnosti = '', Pocet_Odpracovanych_Hodin = '00:00:00', Miesto_Vykonu = '', PH_* = '00:00:00', SPOLU = '00:00:00'.
+    - [x] **Work Day**: Set Cas_Vykonu_Od = df_source['Dochadzka_Prichod'], Cas_Vykonu_Do = df_source['Dochadzka_Odchod'], Prestavka_Trvanie = convert minutes (pd.to_timedelta(df_source['Prestavka_min'], unit='min').dt.strftime('%H:%M:%S') or '00:00:00' if invalid), Popis_Cinnosti = activity_templates[project], Pocet_Odpracovanych_Hodin = df_source['Skutocny_Odpracovany_Cas'], Miesto_Vykonu = 'Bratislava', PH_* = '00:00:00', SPOLU = Pocet_Odpracovanych_Hodin.
+  - [x] Handle edge cases: For vacation/absent breaks or times, ensure empty strings where appropriate (not '00:00:00' unless hours). Ignore interruptions unless net time seems incorrect (optional validation: recalculate worked time if needed).
+  - [x] Configurability: Use the template dict to swap descriptions for sadecky (e.g., omit package 3, add role-specific text).
+  - [x] Error Handling: Try-except for timedelta conversions (e.g., invalid minutes → log and set '00:00:00'); validate time formats (HH:MM:SS).
 
 - [ ] 4. **Load and Prepare Target Excel Structure**
   - [ ] Load workbook: `wb = load_workbook('data/input/ronec_vykaz.xlsx')`, select sheet `ws = wb['Vykaz']` (confirm sheet name dynamically if needed).
