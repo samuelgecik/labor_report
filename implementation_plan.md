@@ -21,19 +21,19 @@ This plan synthesizes the analysis from update_analysis.md into a detailed, step
 
 ### Step-by-Step Implementation Plan
 
-- [ ] 1. **Setup and Configuration**
-  - [ ] Import libraries: `import pandas as pd`, `from openpyxl import load_workbook`, `from datetime import datetime, timedelta`, and `import shutil` for backups.
-  - [ ] Define configuration parameters: Select project template (e.g., `project = 'ronec'`), standard times for vacation, and validation rules (e.g., expected month=7, year=2025).
-  - [ ] Create paths: Source CSV at root, target Excel at `data/input/ronec_vykaz.xlsx`.
-  - [ ] Backup the original Excel: Copy to `ronec_vykaz_backup_{timestamp}.xlsx` using `shutil.copy()`.
-  - [ ] Error Handling: Wrap in try-except for file not found or import errors; log and exit gracefully.
+- [x] 1. **Setup and Configuration**
+  - [x] Import libraries: `import pandas as pd`, `from openpyxl import load_workbook`, `from datetime import datetime, timedelta`, and `import shutil` for backups.
+  - [x] Define configuration parameters: Select project template (e.g., `project = 'ronec'`), standard times for vacation, and validation rules (e.g., expected month=7, year=2025).
+  - [x] Create paths: Source CSV at root, target Excel at `data/input/ronec_vykaz.xlsx`.
+  - [x] Backup the original Excel: Copy to `ronec_vykaz_backup_{timestamp}.xlsx` using `shutil.copy()`.
+  - [x] Error Handling: Wrap in try-except for file not found or import errors; log and exit gracefully.
 
-- [ ] 2. **Read and Validate Source Data**
-  - [ ] Load the CSV: `df_source = pd.read_csv('extracted_source_with_headers.csv')`.
-  - [ ] Parse dates: `df_source['Datum'] = pd.to_datetime(df_source['Datum'])` (ignores time `00:00:00` automatically).
-  - [ ] Validate data: Check row count (32), confirm all dates in July 2025 (`df_source['Datum'].dt.month == 7` and `dt.year == 2025`), and ensure 31 unique days. Flag mismatches (e.g., wrong month) and halt if invalid.
-  - [ ] Clean data: Replace any NaN in numeric fields (e.g., `Prestavka_min`) with '-' for consistency.
-  - [ ] Error Handling: Use try-except for parsing errors (e.g., malformed dates); log invalid rows and suggest manual review.
+- [x] 2. **Read and Validate Source Data**
+  - [x] Load the CSV: `df_source = pd.read_csv('extracted_source_with_headers.csv')`.
+  - [x] Parse dates: `df_source['Datum'] = pd.to_datetime(df_source['Datum'])` (ignores time `00:00:00` automatically).
+  - [x] Validate data: Check row count (32), confirm all dates in July 2025 (`df_source['Datum'].dt.month == 7` and `dt.year == 2025`), and ensure 31 unique days. Flag mismatches (e.g., wrong month) and halt if invalid.
+  - [x] Clean data: Replace any NaN in numeric fields (e.g., `Prestavka_min`) with '-' for consistency.
+  - [x] Error Handling: Use try-except for parsing errors (e.g., malformed dates); log invalid rows and suggest manual review.
 
 - [ ] 3. **Transform and Map Data**
   - [ ] Initialize target DataFrame: Create `df_target` with columns matching the target structure (Datum, Cas_Vykonu_Od, Cas_Vykonu_Do, Prestavka_Trvanie, Popis_Cinnosti, Pocet_Odpracovanych_Hodin, Miesto_Vykonu, PH_Projekt_POO, PH_Riesenie_POO, PH_Mimo_Projekt_POO, SPOLU) and 31 rows (exclude header/summary for now).
