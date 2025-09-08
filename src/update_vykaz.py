@@ -35,47 +35,41 @@ def main():
             print(f"Backup created: {backup_path}")
         else:
             print(f"Original file not found: {target_excel}. Skipping backup.")
-print("Setup and configuration completed successfully.")
 
-# Step 2: Read and Validate Source Data
-try:
-    df_source = pd.read_csv(source_csv)
+        print("Setup and configuration completed successfully.")
 
-    # Parse dates
-    df_source['Datum'] = pd.to_datetime(df_source['Datum'])
+        # Step 2: Read and Validate Source Data
+        df_source = pd.read_csv(source_csv)
 
-    # Validation
-    row_count = df_source.shape[0]
-    if row_count != 32:
-        print(f"Validation failed: Expected 32 rows, got {row_count}")
-        exit(1)
+        # Parse dates
+        df_source['Datum'] = pd.to_datetime(df_source['Datum'])
 
-    if not (df_source['Datum'].dt.month == expected_month).all() or not (df_source['Datum'].dt.year == expected_year).all():
-        print("Validation failed: Not all dates are in July 2025")
-        exit(1)
+        # Validation
+        row_count = df_source.shape[0]
+        if row_count != 31:
+            print(f"Validation failed: Expected 31 data rows, got {row_count}")
+            exit(1)
 
-    unique_days = df_source['Datum'].dt.date.nunique()
-    if unique_days != 31:
-        print(f"Validation failed: Expected 31 unique days, got {unique_days}")
-        exit(1)
+        if not (df_source['Datum'].dt.month == expected_month).all() or not (df_source['Datum'].dt.year == expected_year).all():
+            print("Validation failed: Not all dates are in July 2025")
+            exit(1)
 
-    # Clean data: replace NaN in numeric fields with '-'
-    numeric_cols = df_source.select_dtypes(include=['number']).columns
-    df_source[numeric_cols] = df_source[numeric_cols].fillna('-')
+        unique_days = df_source['Datum'].dt.date.nunique()
+        if unique_days != 31:
+            print(f"Validation failed: Expected 31 unique days, got {unique_days}")
+            exit(1)
 
-    print("Read and Validate Source Data completed successfully.")
+        # Clean data: replace NaN in numeric fields with '-'
+        numeric_cols = df_source.select_dtypes(include=['number']).columns
+        df_source[numeric_cols] = df_source[numeric_cols].fillna('-')
 
-except Exception as parsing_error:
-    print(f"Parsing error during source data read: {parsing_error}")
-    print("Invalid rows or data issues detected. Suggest manual review of source CSV.")
-    exit(1)
+        print("Read and Validate Source Data completed successfully.")
 
-
-except ImportError as e:
+    except ImportError as e:
         print(f"Import error: {e}")
         exit(1)
     except FileNotFoundError as e:
-        print(f"File not found error: {e}")
+        print(f"File not found: {e}")
         exit(1)
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
