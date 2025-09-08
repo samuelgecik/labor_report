@@ -1,5 +1,6 @@
 import argparse
 import shutil
+import os
 from datetime import datetime, timedelta
 import pandas as pd
 from openpyxl import load_workbook
@@ -207,6 +208,69 @@ def update_daily_rows(ws, df_target):
     except Exception as e:
         logging.error(f"Validation error: {e}")
 
+def recalculate_summary(df_target, ws):
+    # Compute non-absent days
+    try:
+        work_days = len(df_target[df_target['SPOLU'] != '00:00:00'])
+    except Exception as e:
+        logging.warning(f"Error counting work days: {e}")
+        work_days = 0
+
+    # Sum hours
+    total_td = timedelta()
+    total_time_str = '00:00:00'
+    for value in df_target['SPOLU']:
+        if value not in (None, '00:00:00'):
+            try:
+                h, m, s = map(int, value.split(':'))
+                total_td += timedelta(hours=h, minutes=m, seconds=s)
+            except (ValueError, AttributeError, TypeError) as e:
+                logging.warning(f"Could not parse SPOLU value '{value}': {e}")
+
+    try:
+        total_seconds = total_td.total_seconds()
+        hours = int(abs(total_seconds) // 3600)
+        minutes = int((abs(total_seconds) % 3600) // 60)
+        seconds = int(abs(total_seconds) % 60)
+        total_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    except Exception as e:
+        logging.warning(f"Error formatting total time: {e}")
+
+    summary_text = f"{work_days} days, {total_time_str}"
+
+    # Update cells in row 57
+    try:
+        ws.cell(row=57, column=1, value=summary_text)
+        ws.cell(row=57, column=11, value=total_time_str)
+        logging.info(f"Summary updated: {summary_text} in A57, {total_time_str} in K57")
+    except Exception as e:
+        logging.error(f"Error updating summary cells: {e}")
+
+    return summary_text, total_time_str
+
+def save_and_validate(wb, df_target, backup_path, original_path, project):
+    output_path = f'data/output/{project}_vykaz.xlsx'
+    os.makedirs('data/output', exist_ok=True)
+    try:
+        wb.save(output_path)
+        logging.info(f"Workbook saved to {output_path}")
+        df_target.to_csv('transformed_data.csv', index=False)
+        logging.info("Transformed CSV generated for audit")
+        wb.close()
+        logging.info("Workbook closed successfully")
+    except PermissionError as e:
+        logging.error(f"Permission error saving workbook: {e}. Please close Excel file and retry.")
+        wb.close()
+    except Exception as e:
+        logging.error(f"Error saving workbook: {e}")
+        if os.path.exists(backup_path):
+            shutil.copy(backup_path, original_path)
+            logging.info(f"Rolled back to backup: {backup_path} -> {original_path}")
+        else:
+            logging.warning("No backup found for rollback")
+        wb.close()
+        exit(1)
+
 def main():
     # Parse command line arguments with hardcoded defaults
     parser = argparse.ArgumentParser(description='Update Vykaz Script')
@@ -284,6 +348,14 @@ def main():
         # Step 5: Update Daily Rows in Excel
         update_daily_rows(ws, df_target)
         print("Update Daily Rows in Excel completed successfully.")
+
+        # Step 6: Recalculate and Update Summary Row
+        recalculate_summary(df_target, ws)
+        print("Recalculate and Update Summary Row completed successfully.")
+
+        # Step 7: Save Changes and Final Validation
+        save_and_validate(wb, df_target, backup_path, target_excel, project)
+        print("Save Changes and Final Validation completed successfully.")
 
     except ImportError as e:
         print(f"Import error: {e}")

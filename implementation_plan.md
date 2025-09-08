@@ -61,18 +61,18 @@ This plan synthesizes the analysis from update_analysis.md into a detailed, step
   - [x] Special Considerations: For vacation, ensure Popis_Cinnosti is exactly "DOVOLENKA" (uppercase). Do not touch other sheets.
   - [x] Error Handling: IndexError if row mismatch; validate post-update by reading back values.
 
-- [ ] 6. **Recalculate and Update Summary Row**
-  - [ ] Compute summary: Count non-absent days (`work_days = len(df_target[df_target['SPOLU'] != '00:00:00'])`), sum hours (parse HH:MM:SS to timedelta, sum, format back: e.g., total_days + ', ' + total_hours).
-  - [ ] Update row 57: Set cells for summary text (e.g., A57 = f'{work_days} days, {total_time}'), potentially update SPOLU total.
-  - [ ] If original summary has formulas (e.g., SUM), re-enable or recalculate manually to match format like "6 days, 16:00:00".
-  - [ ] Preserve merged cells/styles in row 57.
-  - [ ] Error Handling: timedelta parsing errors → default to '0 days, 00:00:00'; log discrepancies.
+- [x] 6. **Recalculate and Update Summary Row**
+  - [x] Compute summary: Count non-absent days (`work_days = len(df_target[df_target['SPOLU'] != '00:00:00'])`), sum hours (parse HH:MM:SS to timedelta, sum, format back: e.g., total_days + ', ' + total_hours).
+  - [x] Update row 57: Set cells for summary text (e.g., A57 = f'{work_days} days, {total_time}'), potentially update SPOLU total.
+  - [x] If original summary has formulas (e.g., SUM), re-enable or recalculate manually to match format like "6 days, 16:00:00".
+  - [x] Preserve merged cells/styles in row 57.
+  - [x] Error Handling: timedelta parsing errors → default to '0 days, 00:00:00'; log discrepancies.
 
-- [ ] 7. **Save Changes and Final Validation**
-  - [ ] Save workbook: `wb.save('data/output/ronec_vykaz.xlsx')`.
-  - [ ] Optional: Generate a transformed CSV (`df_target.to_csv('transformed_data.csv')`) for audit.
-  - [ ] Cleanup: Close workbook.
-  - [ ] Error Handling: Permission errors on save → suggest closing Excel; rollback to backup if update fails midway.
+- [x] 7. **Save Changes and Final Validation**
+  - [x] Save workbook: `wb.save('data/output/ronec_vykaz.xlsx')`.
+  - [x] Optional: Generate a transformed CSV (`df_target.to_csv('transformed_data.csv')`) for audit.
+  - [x] Cleanup: Close workbook.
+  - [x] Error Handling: Permission errors on save → suggest closing Excel; rollback to backup if update fails midway.
 
 ### Testing Considerations
 - **Unit Tests**: Test transformations on sample rows (e.g., work/vacation/absent examples from analysis) using pytest: verify mappings, date extraction, break conversions.
