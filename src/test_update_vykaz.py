@@ -300,5 +300,40 @@ class TestTransformAndMap:
         assert df_target.loc[i, 'SPOLU'] == '08:00:00'
         assert df_target.loc[i, 'Datum'] == '3.'
 
+import tempfile
+import os
+from openpyxl import Workbook
+
+class TestLoadTargetExcel:
+    @pytest.fixture
+    def temp_excel(self):
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.xlsx', delete=False) as tmp:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = 'Vykaz'
+            # Add headers as per expected
+            expected_headers = ['Datum', 'Cas_Vykonu_Od', 'Cas_Vykonu_Do', 'Prestavka_Trvanie', 'Popis_Cinnosti', 'Pocet_Odpracovanych_Hodin', 'Miesto_Vykonu', 'PH_Projekt_POO', 'PH_Riesenie_POO', 'PH_Mimo_Projekt_POO', 'SPOLU']
+            for col, header in enumerate(expected_headers, 1):
+                ws.cell(row=1, column=col, value=header)
+            wb.save(tmp.name)
+        yield tmp.name
+        os.unlink(tmp.name)
+
+    # Import the function for testing
+    from update_vykaz import load_target_excel
+
+    def test_load_success(self, temp_excel):
+        wb, ws = load_target_excel(temp_excel)
+        assert wb is not None
+        assert ws is not None
+        assert ws.title == 'Vykaz'
+
+    def test_sheet_not_found(self, temp_excel):
+        wb, ws = load_target_excel(temp_excel + '_nonexistent')
+        assert wb is None
+        assert ws is None  # Test FileNotFound
+
+if __name__ == "__main__":
+    pytest.main([__file__])
 if __name__ == "__main__":
     pytest.main([__file__])
