@@ -8,11 +8,11 @@ This plan synthesizes the analysis from update_analysis.md into a detailed, step
 - **Environment Setup**: Python 3.x with installed libraries: `pandas` for CSV handling and data transformations, `openpyxl` for Excel read/write to preserve formatting, and `datetime`/`timedelta` from the standard library for date/time parsing and conversions.
 - **Input Files**: 
   - `extracted_source_with_headers.csv` (32 rows: header + 31 days of July 2025 attendance data).
-  - `ronec_vykaz.xlsx` (target Excel file with "Vykaz" sheet: row 1 header, rows 2-32 daily data, row 33 summary).
+  - `ronec_vykaz.xlsx` (target Excel file with "Ing. Simon Ronec" sheet: headers in rows 24-25, rows 26-56 daily data, row 57 summary).
 - **Optional References**: `extracted_target_with_headers.csv` and `extracted_sadecky_target_with_headers.csv` for validation and vacation handling examples.
 - **Configuration**: Define variables for project-specific settings, e.g., a dictionary of activity templates (`activity_templates = {'ronec': 'Podieľanie sa na realizácii pracovného balíka č. 1 s názvom: Analýza užívateľských potrieb a návrh konceptu riešenia, pracovného balíka č. 2 s názvom: Získavanie a spracovanie dát na tréning AI modelu a pracovného balíka č. 3 s názvom: Experimentálny vývoj a tréning AI modelu [role-specific addition]', 'sadecky': 'Podieľanie sa na realizácii pracovného balíka č. 1 ... a č. 2 ... - [role-specific]'}`) and standard vacation times (e.g., `vacation_start = '09:00:00'`, `vacation_end = '17:00:00'`).
 - **Backup Strategy**: Always create a timestamped backup of the original Excel before saving changes.
-- **Assumptions**: Source data is clean and aligned to July 2025; interruptions (`Prerusenie_*`) are ignored as net worked time (`Skutocny_Odpracovany_Cas`) is pre-calculated and trusted. Target sheet structure is fixed (columns A-K for Datum to SPOLU).
+- **Assumptions**: Source data is clean and aligned to July 2025; interruptions (`Prerusenie_*`) are ignored as net worked time (`Skutocny_Odpracovany_Cas`) is pre-calculated and trusted. Target sheet structure is fixed (columns A-K for Datum to SPOLU). Actual target structure has headers in rows 24-25 with Slovak labels (e.g., 'Dátum', 'Čas výkonu od'), sheet 'Ing. Simon Ronec'; script configurable for variations.
 
 ### Script Structure Suggestions
 - **Preferred Approach**: Create a new standalone script `src/update_vykaz.py` for modularity, importing necessary libraries and configurations. This can be run monthly via `python src/update_vykaz.py --project ronec --month July --year 2025` (using argparse for inputs to support variations).
@@ -47,25 +47,25 @@ This plan synthesizes the analysis from update_analysis.md into a detailed, step
   - [x] Configurability: Use the template dict to swap descriptions for sadecky (e.g., omit package 3, add role-specific text).
   - [x] Error Handling: Try-except for timedelta conversions (e.g., invalid minutes → log and set '00:00:00'); validate time formats (HH:MM:SS).
 
-- [ ] 4. **Load and Prepare Target Excel Structure**
-  - [ ] Load workbook: `wb = load_workbook('data/input/ronec_vykaz.xlsx')`, select sheet `ws = wb['Vykaz']` (confirm sheet name dynamically if needed).
-  - [ ] Verify structure: Check row 1 for headers, ensure 33+ rows exist, note any merged cells or styles in rows 2-33 to avoid overwriting.
-  - [ ] Preserve formatting: Do not modify styles; only update cell values. If summary row has formulas, note for recalculation.
-  - [ ] Error Handling: If sheet not found or file locked, log error and suggest manual open.
+- [x] 4. **Load and Prepare Target Excel Structure**
+  - [x] Load workbook: `wb = load_workbook('data/input/ronec_vykaz.xlsx')`, select sheet `ws = wb['Ing. Simon Ronec']` (confirm sheet name dynamically if needed).
+  - [x] Verify structure: Check rows 24-25 for headers with Slovak labels (e.g., 'Dátum', 'Čas výkonu od', ..., 'SPOLU'), ensure row count >=33, note any merged cells or styles in rows 26+ to preserve.
+  - [x] Preserve formatting: Do not modify styles; only update cell values. If summary row has formulas, note for recalculation. Mention merged cells/styles preserved.
+  - [x] Error Handling: If sheet not found or file locked, log error and suggest manual open.
 
 - [ ] 5. **Update Daily Rows in Excel**
-  - [ ] Align data: For i in range(31): target_row = i + 2 (Excel rows 2-32).
-  - [ ] Map to cells: Assuming columns A= Datum (1), B= Cas_Vykonu_Od (2), ..., K= SPOLU (11). Set `ws.cell(row=target_row, column=col_num, value=df_target.iloc[i][col_name])`.
-  - [ ] Overwrite selectively: Clear only data columns (B-K) if existing values conflict, but retain Datum if unchanged.
+  - [ ] Align data: For i in range(31): target_row = i + 26 (Excel rows 26-56, after headers in 24-25).
+  - [ ] Map to cells: Assuming columns A= Dátum (1), B= Čas výkonu od (2), ..., K= SPOLU (11). Set `ws.cell(row=target_row, column=col_num, value=df_target.iloc[i][col_name])`.
+  - [ ] Overwrite selectively: Clear only data columns (B-K) if existing values conflict, but retain Dátum if unchanged.
   - [ ] Handle empties: Use '' for empty strings, '00:00:00' for zero times; ensure time cells are formatted as time if possible (via openpyxl styles, but minimally).
   - [ ] Special Considerations: For vacation, ensure Popis_Cinnosti is exactly "DOVOLENKA" (uppercase). Do not touch other sheets.
   - [ ] Error Handling: IndexError if row mismatch; validate post-update by reading back values.
 
 - [ ] 6. **Recalculate and Update Summary Row**
   - [ ] Compute summary: Count non-absent days (`work_days = len(df_target[df_target['SPOLU'] != '00:00:00'])`), sum hours (parse HH:MM:SS to timedelta, sum, format back: e.g., total_days + ', ' + total_hours).
-  - [ ] Update row 33: Set cells for summary text (e.g., A33 = f'{work_days} days, {total_time}'), potentially update SPOLU total.
+  - [ ] Update row 57: Set cells for summary text (e.g., A57 = f'{work_days} days, {total_time}'), potentially update SPOLU total.
   - [ ] If original summary has formulas (e.g., SUM), re-enable or recalculate manually to match format like "6 days, 16:00:00".
-  - [ ] Preserve merged cells/styles in row 33.
+  - [ ] Preserve merged cells/styles in row 57.
   - [ ] Error Handling: timedelta parsing errors → default to '0 days, 00:00:00'; log discrepancies.
 
 - [ ] 7. **Save Changes and Final Validation**
