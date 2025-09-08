@@ -16,10 +16,9 @@ headers = ['Datum', 'Dochadzka_Prichod', 'Dochadzka_Odchod', 'Prestavka_min', 'P
 # Call the extraction function with the specified parameters.
 source_data = extract_data(
     file_path='data/input/ronec_dochadzka.xlsx',
+    column_indices=[1, 2, 3, 4, 5, 6, 7],
     header_text="Dátum",
-    header_row_offset=2,
-    extract_range=True,
-    num_columns=7
+    header_row_offset=2
 )
 
 # Write to CSV
@@ -27,7 +26,7 @@ with open('extracted_source_with_headers.csv', 'w', newline='') as csvfile:
     writer = csv.writer(csvfile)
     writer.writerow(headers)
     for row in source_data:
-        writer.writerow(row.values())
+        writer.writerow(row)
 
 # Print the extracted data from the source file.
 print(f"Extracted {len(source_data)} records and saved to extracted_source_with_headers.csv")
@@ -47,10 +46,9 @@ start_row_strategy = lambda header_row: 26
 # Call the extraction function with the specified parameters.
 target_data = extract_data(
     file_path='data/input/ronec_vykaz.xlsx',
-    extract_range=True,
+    column_indices=[1, 2, 3, 4, [5, 6, 7, 8], 9, 10, 11, 12, 13, 14],
     start_row_strategy=start_row_strategy,
-    stop_condition=lambda val: val == 'Čestné vyhlásenie: ',
-    num_columns=11
+    stop_condition=lambda val: val == 'Čestné vyhlásenie: '
 )
 
 # Write to CSV
@@ -58,7 +56,7 @@ with open('extracted_target_with_headers.csv', 'w', newline='') as csvfile:
     writer = csv.writer(csvfile)
     writer.writerow(target_headers)
     for row in target_data:
-        writer.writerow(row.values())
+        writer.writerow(row)
 
 # Print the extracted data from the target file.
 print(f"Extracted {len(target_data)} records and saved to extracted_target_with_headers.csv")
