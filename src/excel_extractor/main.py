@@ -67,9 +67,7 @@ def extract_data(
             row immediately after the header row.
         header_row_offset (int, optional): The number of rows to skip after
             the header row to find the start of the data. Defaults to 1.
-        stop_condition (callable, optional): A function that takes the value
-            of the cell in the first column as input and returns True if the
-            extraction loop should terminate. Defaults to None.
+        stop_condition (callable, optional): A function that takes the row data (list) as input and returns True to stop extraction. Defaults to None.
 
     Returns:
         list[list]: A list of lists where each inner list represents a row of
@@ -130,16 +128,15 @@ def extract_data(
                 value = None
             row_data.append(value)
 
+        # Check stopping condition before appending
+        if stop_condition and stop_condition(row_data):
+            break
+
         # Check if row has any non-None data
         if any(v is not None for v in row_data):
             data.append(row_data)
         else:
             # If the entire row is None, stop extraction (empty row)
-            break
-
-        # Check stopping condition (using first column)
-        first_col_val = row_data[0] if row_data else None
-        if stop_condition and stop_condition(first_col_val):
             break
 
         row += 1

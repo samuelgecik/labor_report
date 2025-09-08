@@ -33,8 +33,8 @@ print(f"Extracted {len(source_data)} records and saved to extracted_source_with_
 print("-" * 40)
 
 
-# --- Target File Extraction (ronec_vykaz.xlsx) ---
-print("\n--- Extracting from ronec_vykaz.xlsx ---")
+# --- Target File Extraction (sadecky_vykaz.xlsx) ---
+print("\n--- Extracting from sadecky_vykaz.xlsx ---")
 
 # Define new headers for target CSV
 target_headers = ['Datum', 'Cas_Vykonu_Od', 'Cas_Vykonu_Do', 'Prestavka_Trvanie', 'Popis_Cinnosti', 'Pocet_Odpracovanych_Hodin', 'Miesto_Vykonu', 'PH_Projekt_POO', 'PH_Riesenie_POO', 'PH_Mimo_Projekt_POO', 'SPOLU']
@@ -43,21 +43,27 @@ target_headers = ['Datum', 'Cas_Vykonu_Od', 'Cas_Vykonu_Do', 'Prestavka_Trvanie'
 # In this case, the data always begins at row 26.
 start_row_strategy = lambda header_row: 26
 
+# Define stop condition to halt extraction before including the "Spolu:" row
+def stop_for_spolu(row_data):
+    return len(row_data) > 4 and row_data[4] and "Spolu:" in str(row_data[4])
+
 # Call the extraction function with the specified parameters.
 target_data = extract_data(
-    file_path='data/input/ronec_vykaz.xlsx',
+    file_path='data/input/sadecky_vykaz.xlsx',
     column_indices=[1, 2, 3, 4, [5, 6, 7, 8], 9, 10, 11, 12, 13, 14],
     start_row_strategy=start_row_strategy,
-    stop_condition=lambda val: val == 'Čestné vyhlásenie: '
+    stop_condition=stop_for_spolu
 )
 
 # Write to CSV
-with open('extracted_target_with_headers.csv', 'w', newline='') as csvfile:
+
+# Write to CSV
+with open('extracted_sadecky_target_with_headers.csv', 'w', newline='') as csvfile:
     writer = csv.writer(csvfile)
     writer.writerow(target_headers)
     for row in target_data:
         writer.writerow(row)
 
 # Print the extracted data from the target file.
-print(f"Extracted {len(target_data)} records and saved to extracted_target_with_headers.csv")
+print(f"Extracted {len(target_data)} records and saved to extracted_sadecky_target_with_headers.csv")
 print("-" * 40)
