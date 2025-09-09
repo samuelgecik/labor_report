@@ -40,7 +40,7 @@ def transform_and_map_data(df_source, project):
     def get_skutocny(r):
         s = r['Skutocny_Odpracovany_Cas']
         if pd.isna(s) or s == '-':
-            return '08:00:00'
+            return '00:00:00'
         return s
 
     for i in range(31):
@@ -51,18 +51,40 @@ def transform_and_map_data(df_source, project):
             dochadzka = '-'
             row = None  # Not used for '-'
 
-        if dochadzka == 'Dovolenka':
-            # Vacation
-            df_target.loc[i, 'Cas_Vykonu_Od'] = '09:00:00'
-            df_target.loc[i, 'Cas_Vykonu_Do'] = '17:00:00'
-            df_target.loc[i, 'Prestavka_Trvanie'] = ''
-            df_target.loc[i, 'Popis_Cinnosti'] = 'DOVOLENKA'
-            df_target.loc[i, 'Pocet_Odpracovanych_Hodin'] = get_skutocny(row)
+        weekend_fields = ['Dochadzka_Prichod', 'Dochadzka_Odchod', 'Prestavka_min', 'Prerusenie_Odchod', 'Prerusenie_Prichod', 'Skutocny_Odpracovany_Cas']
+
+        if i < len(df_source) and row is not None:
+            sodch = str(dochadzka).strip() if not pd.isna(dochadzka) else 'NaN'
+            is_weekend = all(pd.isna(row[col]) or str(row[col]).strip() == '-' for col in weekend_fields)
+            wd = row['Datum'].weekday()
+            logging.info(f"Row {i}: weekday {wd} (0=Mon), date {row['Datum'].date()}, dochadzka='{sodch}', weekend_detect={is_weekend}")
+
+        if i < len(df_source) and row is not None and not pd.isna(row['Datum']) and all(pd.isna(row[col]) or str(row[col]).strip() == '-' for col in weekend_fields):
+            # Weekend
+            df_target.loc[i, 'Cas_Vykonu_Od'] = ''
+            df_target.loc[i, 'Cas_Vykonu_Do'] = ''
+            df_target.loc[i, 'Prestavka_Trvanie'] = '00:00:00'
+            df_target.loc[i, 'Popis_Cinnosti'] = ''
+            df_target.loc[i, 'Pocet_Odpracovanych_Hodin'] = '00:00:00'
             df_target.loc[i, 'Miesto_Vykonu'] = ''
             df_target.loc[i, 'PH_Projekt_POO'] = '00:00:00'
             df_target.loc[i, 'PH_Riesenie_POO'] = '00:00:00'
             df_target.loc[i, 'PH_Mimo_Projekt_POO'] = '00:00:00'
-            df_target.loc[i, 'SPOLU'] = df_target.loc[i, 'Pocet_Odpracovanych_Hodin']
+            df_target.loc[i, 'SPOLU'] = '00:00:00'
+            logging.info(f"Handled as weekend row {i}: set empty/00:00:00 for non-date fields")
+        elif dochadzka == 'Dovolenka':
+            # Vacation
+            df_target.loc[i, 'Cas_Vykonu_Od'] = ''
+            df_target.loc[i, 'Cas_Vykonu_Do'] = ''
+            df_target.loc[i, 'Prestavka_Trvanie'] = ''
+            df_target.loc[i, 'Popis_Cinnosti'] = 'DOVOLENKA'
+            df_target.loc[i, 'Pocet_Odpracovanych_Hodin'] = '08:00:00'
+            df_target.loc[i, 'Miesto_Vykonu'] = ''
+            logging.info(f"Vacation row {i}: Miesto set empty")
+            df_target.loc[i, 'PH_Projekt_POO'] = '00:00:00'
+            df_target.loc[i, 'PH_Riesenie_POO'] = '00:00:00'
+            df_target.loc[i, 'PH_Mimo_Projekt_POO'] = '00:00:00'
+            df_target.loc[i, 'SPOLU'] = '08:00:00'
         elif dochadzka == '-':
             # Absent
             df_target.loc[i, 'Cas_Vykonu_Od'] = ''
@@ -100,33 +122,28 @@ def load_target_excel(target_excel):
             ws = wb[sheet_name]
         except KeyError:
             print(f"Error: Sheet 'Vykaz' not found in {target_excel}. Please ensure the sheet exists and is named 'Vykaz'. Available sheets: {wb.sheetnames}")
-            return None, None
+            return None, None, None, None
 
-        # Verify structure: Check rows for expected headers
+        # Verify structure: Search for 'Dátum' in column 1 across rows 1-33
         header_row = None
         for row_num in range(1, 34):  # Check rows 1 to 33
-            headers = []
-            for col in range(1, len(expected_headers) + 1):
-                cell = ws.cell(row=row_num, column=col)
-                if cell.value and isinstance(cell.value, str):
-                    headers.append(cell.value.strip())
-                else:
-                    headers.append('')
-
-            if headers == expected_headers:
+            cell_value = ws.cell(row=row_num, column=1).value
+            if cell_value and isinstance(cell_value, str) and 'Dátum' in cell_value.strip():
                 header_row = row_num
                 break
-            print(f"Row {row_num} headers: {headers[:5]}...")  # Print first 5
+            print(f"Row {row_num} column 1: {cell_value}")  # Debug print
 
         if header_row is None:
-            print("Error: Expected headers not found in first 33 rows.")
-            return None, None
+            print("Error: 'Dátum' not found in column 1 within first 33 rows.")
+            return None, None, None, None
 
-        print(f"Headers found in row {header_row}")
-        # Adjust for header row
-        if header_row != 1:
-            print(f"Error: Headers expected in row 1, but found in row {header_row}. Please ensure the sheet starts with headers in row 1.")
-            return None, None
+        data_start_row = header_row + 2
+        print(f"Headers found in row {header_row}, data starts at row {data_start_row}")
+
+        # Ensure ws.max_row >= data_start_row + 30 (for 31 days)
+        if ws.max_row < data_start_row + 30:
+            print(f"Error: Expected at least {data_start_row + 30} rows for 31 data entries, but found {ws.max_row}.")
+            return None, None, None, None
 
         # Ensure ws.max_row >= 33
         if ws.max_row < 33:
@@ -135,46 +152,68 @@ def load_target_excel(target_excel):
 
         # Note merged cells for preservation
         if ws.merged_cells:
-            print(f"Note: Merged cells in worksheet: {ws.merged_cells}. Formatting will be preserved during value updates.")
+            print(f"Note: Merged cells in worksheet: {list(ws.merged_cells.ranges)}. Formatting will be preserved during value updates.")
 
         # Preserve formatting: Only cell values will be updated, not styles.
         # If summary row (33) has formulas, note for later recalculation but do not change yet.
         # Note: This function only loads and verifies; no modifications yet.
 
-        return wb, ws
+        return wb, ws, header_row, data_start_row
 
     except FileNotFoundError:
         print(f"Error: Target Excel file not found: {target_excel}")
-        return None, None
+        return None, None, None, None
     except PermissionError:
         print(f"Error: Target Excel file is locked or permission denied: {target_excel}. Please close the file if open and try again.")
-        return None, None
+        return None, None, None, None
     except Exception as e:
         print(f"Unexpected error loading Excel: {e}")
-        return None, None
+        return None, None, None, None
 
-def update_daily_rows(ws, df_target):
+def update_daily_rows(ws, df_target, data_start_row):
     col_mappings = {
-        'Datum': 1,
-        'Cas_Vykonu_Od': 2,
-        'Cas_Vykonu_Do': 3,
-        'Prestavka_Trvanie': 4,
-        'Popis_Cinnosti': 5,
-        'Pocet_Odpracovanych_Hodin': 6,
-        'Miesto_Vykonu': 7,
-        'PH_Projekt_POO': 8,
-        'PH_Riesenie_POO': 9,
-        'PH_Mimo_Projekt_POO': 10,
-        'SPOLU': 11
-    }
+            'Datum': 1,
+            'Cas_Vykonu_Od': 2,
+            'Cas_Vykonu_Do': 3,
+            'Prestavka_Trvanie': 4,
+            'Popis_Cinnosti': 5,
+            'Pocet_Odpracovanych_Hodin': 9,
+            'Miesto_Vykonu': 10,
+            'PH_Projekt_POO': 11,
+            'PH_Riesenie_POO': 12,
+            'PH_Mimo_Projekt_POO': 13,
+            'SPOLU': 14
+        }
 
+    # Find the Popis merge range [5-8]
+    original_ranges = list(ws.merged_cells.ranges)
+    popis_merge_coord = None
+    for merged_range in original_ranges:
+        if merged_range.min_col == 5 and merged_range.max_col == 8:
+            popis_merge_coord = merged_range.coord
+            break
+
+    logging.info(f"Merged ranges before unmerge: {len(list(ws.merged_cells.ranges))}")
+
+    unmerged_coords = set()
     try:
         for i in range(31):
-            target_row = 26 + i
+            target_row = data_start_row + i
+            for merged_range in original_ranges:
+                if merged_range.min_row <= target_row <= merged_range.max_row:
+                    coord = merged_range.coord
+                    if coord not in unmerged_coords:
+                        ws.unmerge_cells(coord)
+                        unmerged_coords.add(coord)
+                        logging.info(f"Unmerging {str(merged_range)} for row {target_row}")
+
             expected_date = df_target.iloc[i]['Datum']
             current_date = ws.cell(row=target_row, column=1).value
             if current_date != expected_date:
                 ws.cell(row=target_row, column=1, value=expected_date)
+
+            if df_target.iloc[i]['Popis_Cinnosti'] == 'DOVOLENKA':
+                logging.info(f"Vacation row {i}: fields set empty for Od/Do")
 
             for col_name, col_num in col_mappings.items():
                 if col_name == 'Datum':
@@ -185,6 +224,16 @@ def update_daily_rows(ws, df_target):
                 # Ensure vacation Popis_Cinnosti is uppercase, but it's already set in df_target
                 ws.cell(row=target_row, column=col_num, value=val)
 
+                if col_name == 'Popis_Cinnosti':
+                    if popis_merge_coord and val != '':
+                        for c in [6, 7, 8]:
+                            ws.cell(row=target_row, column=c, value='')
+
+        # Re-merge cells that were unmerged
+        for coord in unmerged_coords:
+            ws.merge_cells(coord)
+        logging.info(f"Re-merged {len(unmerged_coords)} ranges")
+
     except IndexError as e:
         logging.error(f"IndexError during row update at row {target_row}: {e}")
     except Exception as e:
@@ -193,12 +242,30 @@ def update_daily_rows(ws, df_target):
     # Validation: read back sample rows (26 and 56)
     try:
         sample_indices = [0, 30]
-        target_rows = [26, 56]
+        target_rows = [data_start_row, data_start_row + 30]
         discrepancies = []
         for idx, trow in zip(sample_indices, target_rows):
             actual_vals = {col_name: ws.cell(row=trow, column=col_num).value for col_name, col_num in col_mappings.items()}
             expected_vals = df_target.loc[idx, col_mappings.keys()]
             for col_name in col_mappings:
+                col_num = col_mappings[col_name]
+                # Skip checks for SPOLU if formula cell
+                if col_num == 14 and actual_vals[col_name] is None:
+                    discrepancies.append(f"Row {trow}, col {col_name}: formula cell, expected {expected_vals[col_name]}")
+                    continue
+                # Skip checks if cell is not top-left of merged range
+                is_top_left = True
+                cell_row, cell_col = trow, col_num
+                for merged_range in list(ws.merged_cells.ranges):
+                    bounds = merged_range.bounds
+                    if bounds[0] <= cell_row <= bounds[2] and bounds[1] <= cell_col <= bounds[3]:
+                        if cell_row == bounds[0] and cell_col == bounds[1]:
+                            pass  # it's top-left
+                        else:
+                            is_top_left = False
+                        break
+                if not is_top_left:
+                    continue
                 if actual_vals[col_name] != expected_vals[col_name]:
                     discrepancies.append(f"Row {trow}, col {col_name}: expected {expected_vals[col_name]}, got {actual_vals[col_name]}")
         if discrepancies:
@@ -241,8 +308,8 @@ def recalculate_summary(df_target, ws):
     # Update cells in row 57
     try:
         ws.cell(row=57, column=1, value=summary_text)
-        ws.cell(row=57, column=11, value=total_time_str)
-        logging.info(f"Summary updated: {summary_text} in A57, {total_time_str} in K57")
+        ws.cell(row=57, column=14, value=total_time_str)
+        logging.info(f"Summary updated: {summary_text} in A57, {total_time_str} in N57")
     except Exception as e:
         logging.error(f"Error updating summary cells: {e}")
 
@@ -310,6 +377,9 @@ def main():
 
         # Step 2: Read and Validate Source Data
         df_source = pd.read_csv(source_csv)
+        # Clean data: replace ' -' with '-'
+        df_source['Skutocny_Odpracovany_Cas'] = df_source['Skutocny_Odpracovany_Cas'].astype(str).str.strip().replace(' -', '-', regex=False)
+        df_source['Prestavka_min'] = df_source['Prestavka_min'].astype(str).str.strip().replace(' -', '-', regex=False)
 
         # Parse dates
         df_source['Datum'] = pd.to_datetime(df_source['Datum'])
@@ -340,13 +410,13 @@ def main():
         print("Transform and Map Data completed successfully.")
 
         # Step 4: Load and Prepare Target Excel Structure
-        wb, ws = load_target_excel(target_excel)
-        if wb is None or ws is None:
+        wb, ws, header_row, data_start_row = load_target_excel(target_excel)
+        if wb is None or ws is None or header_row is None or data_start_row is None:
             exit(1)
         print("Load and Prepare Target Excel Structure completed successfully.")
 
         # Step 5: Update Daily Rows in Excel
-        update_daily_rows(ws, df_target)
+        update_daily_rows(ws, df_target, data_start_row)
         print("Update Daily Rows in Excel completed successfully.")
 
         # Step 6: Recalculate and Update Summary Row

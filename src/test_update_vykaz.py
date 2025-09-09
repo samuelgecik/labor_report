@@ -36,7 +36,7 @@ activity_templates_patch = {
 # Helper function to create sample CSV
 def create_sample_csv(filepath, num_rows=31, month=7, year=2025):
     with open(filepath, 'w') as f:
-        f.write("Datum,Dochadzka_Prichod,Dochadzka_Odchod,Prestavka_min,Skutocny_Odpracovany_Cas\n")
+        f.write("Datum,Dochadzka_Prichod,Dochadzka_Odchod,Prestavka_min,Prerusenie_Odchod,Prerusenie_Prichod,Skutocny_Odpracovany_Cas\n")
         for i in range(num_rows):
             datum = f"{year:04d}-{month:02d}-{i+1:02d} 00:00:00"
             # Rotate types: work, vacation, absent
@@ -44,18 +44,24 @@ def create_sample_csv(filepath, num_rows=31, month=7, year=2025):
                 dochadzka_prichod = '09:00:00'
                 dochadzka_odchod = '17:00:00'
                 prestavka_min = '60'
+                prerusenie_odchod = ''
+                prerusenie_prichod = ''
                 skutocny_cas = '08:00:00'
             elif i % 3 == 1:
                 dochadzka_prichod = 'Dovolenka'
                 dochadzka_odchod = '-'
                 prestavka_min = '-'
+                prerusenie_odchod = '-'
+                prerusenie_prichod = '-'
                 skutocny_cas = '08:00:00'
             else:
                 dochadzka_prichod = '-'
                 dochadzka_odchod = '-'
                 prestavka_min = '-'
+                prerusenie_odchod = '-'
+                prerusenie_prichod = '-'
                 skutocny_cas = '-'
-            f.write(f"{datum},{dochadzka_prichod},{dochadzka_odchod},{prestavka_min},{skutocny_cas}\n")
+            f.write(f"{datum},{dochadzka_prichod},{dochadzka_odchod},{prestavka_min},{prerusenie_odchod},{prerusenie_prichod},{skutocny_cas}\n")
 
 # Helper function to create sample Excel
 def create_sample_excel(filepath):
@@ -80,6 +86,8 @@ class TestUnitTests:
             'Dochadzka_Prichod': ['Dovolenka'],
             'Dochadzka_Odchod': ['-'],
             'Prestavka_min': ['-'],
+            'Prerusenie_Odchod': ['-'],
+            'Prerusenie_Prichod': ['-'],
             'Skutocny_Odpracovany_Cas': ['08:00:00']
         })
 
@@ -90,6 +98,8 @@ class TestUnitTests:
             'Dochadzka_Prichod': ['-'],
             'Dochadzka_Odchod': ['-'],
             'Prestavka_min': ['-'],
+            'Prerusenie_Odchod': ['-'],
+            'Prerusenie_Prichod': ['-'],
             'Skutocny_Odpracovany_Cas': ['-']
         })
 
@@ -100,6 +110,8 @@ class TestUnitTests:
             'Dochadzka_Prichod': ['09:00:00'],
             'Dochadzka_Odchod': ['17:00:00'],
             'Prestavka_min': ['60'],
+            'Prerusenie_Odchod': [pd.NA],
+            'Prerusenie_Prichod': [pd.NA],
             'Skutocny_Odpracovany_Cas': ['08:00:00']
         })
 
@@ -149,6 +161,8 @@ class TestUnitTests:
             'Dochadzka_Prichod': ['09:00:00'],
             'Dochadzka_Odchod': ['17:00:00'],
             'Prestavka_min': ['30'],  # 30 min -> 00:30:00
+            'Prerusenie_Odchod': [pd.NA],
+            'Prerusenie_Prichod': [pd.NA],
             'Skutocny_Odpracovany_Cas': ['08:00:00']
         })
         df_target = transform_and_map_data(df, 'ronec')
@@ -161,6 +175,8 @@ class TestUnitTests:
             'Dochadzka_Prichod': ['09:00:00'],
             'Dochadzka_Odchod': ['17:00:00'],
             'Prestavka_min': ['invalid'],
+            'Prerusenie_Odchod': [pd.NA],
+            'Prerusenie_Prichod': [pd.NA],
             'Skutocny_Odpracovany_Cas': ['08:00:00']
         })
         df_target = transform_and_map_data(df, 'ronec')
@@ -173,6 +189,8 @@ class TestUnitTests:
             'Dochadzka_Prichod': ['Dovolenka'],
             'Dochadzka_Odchod': ['-'],
             'Prestavka_min': ['-'],
+            'Prerusenie_Odchod': ['-'],
+            'Prerusenie_Prichod': ['-'],
             'Skutocny_Odpracovany_Cas': [pd.NA]
         })
         df_target = transform_and_map_data(df, 'ronec')
@@ -235,6 +253,8 @@ class TestEdgeCases:
             'Dochadzka_Prichod': ['xx:00:00'],
             'Dochadzka_Odchod': ['17:00:00'],
             'Prestavka_min': ['invalid'],
+            'Prerusenie_Odchod': [pd.NA],
+            'Prerusenie_Prichod': [pd.NA],
             'Skutocny_Odpracovany_Cas': ['invalid']
         })
         df_target = transform_and_map_data(df, 'ronec')
