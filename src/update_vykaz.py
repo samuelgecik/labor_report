@@ -307,9 +307,8 @@ def recalculate_summary(df_target, ws):
 
     # Update cells in row 57
     try:
-        ws.cell(row=57, column=1, value=summary_text)
         ws.cell(row=57, column=14, value=total_time_str)
-        logging.info(f"Summary updated: {summary_text} in A57, {total_time_str} in N57")
+        logging.info(f"Summary updated: {total_time_str} in N57")
     except Exception as e:
         logging.error(f"Error updating summary cells: {e}")
 
