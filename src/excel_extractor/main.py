@@ -46,7 +46,8 @@ def extract_data(
     header_text: str | None = None,
     start_row_strategy=None,
     header_row_offset: int = 1,
-    stop_condition: callable = None
+    stop_condition: callable = None,
+    sheet_name: str = None
 ) -> list[list]:
     """
     Extracts data from specified columns in an Excel sheet.
@@ -68,13 +69,20 @@ def extract_data(
         header_row_offset (int, optional): The number of rows to skip after
             the header row to find the start of the data. Defaults to 1.
         stop_condition (callable, optional): A function that takes the row data (list) as input and returns True to stop extraction. Defaults to None.
+        sheet_name (str, optional): The name of the sheet to extract from. If not provided, defaults to the active sheet.
 
     Returns:
         list[list]: A list of lists where each inner list represents a row of
             data values from the specified columns.
     """
     wb = load_workbook(file_path, data_only=True)
-    sheet = wb.active
+    if sheet_name:
+        try:
+            sheet = wb[sheet_name]
+        except KeyError:
+            raise ValueError(f"Sheet '{sheet_name}' not found in {file_path}. Available sheets: {list(wb.sheetnames)}")
+    else:
+        sheet = wb.active
 
     # Determine header_row
     if header_text:

@@ -1,69 +1,90 @@
 # run_extractor.py
 
-import csv
+"""
+Config-driven Excel data extraction utility.
+Run extraction tasks defined in a YAML configuration file.
+"""
 
-# 1. Import the extract_data function
-from excel_extractor.main import extract_data
+import argparse
+import sys
+import os
 
-# --- Source File Extraction (ronec_dochadzka.xlsx) ---
-print("--- Extracting from ronec_dochadzka.xlsx ---")
+try:
+    import yaml
+except ImportError:
+    print("Error: PyYAML library not found. Install with 'pip install pyyaml'")
+    sys.exit(1)
 
-
-# Define new headers for CSV
-headers = ['Datum', 'Dochadzka_Prichod', 'Dochadzka_Odchod', 'Prestavka_min', 'Prerusenie_Odchod', 'Prerusenie_Prichod', 'Skutocny_Odpracovany_Cas']
-
-# The header row is dynamically located by searching for "Dátum".
-# Call the extraction function with the specified parameters.
-source_data = extract_data(
-    file_path='data/input/ronec_dochadzka.xlsx',
-    column_indices=[1, 2, 3, 4, 5, 6, 7],
-    header_text="Dátum",
-    header_row_offset=2
-)
-
-# Write to CSV
-with open('extracted_source_with_headers.csv', 'w', newline='') as csvfile:
-    writer = csv.writer(csvfile)
-    writer.writerow(headers)
-    for row in source_data:
-        writer.writerow(row)
-
-# Print the extracted data from the source file.
-print(f"Extracted {len(source_data)} records and saved to extracted_source_with_headers.csv")
-print("-" * 40)
+from .extractor_utils import extract_from_workbook, save_extraction_results
 
 
-# --- Target File Extraction (sadecky_vykaz.xlsx) ---
-print("\n--- Extracting from sadecky_vykaz.xlsx ---")
+def main():
+    parser = argparse.ArgumentParser(
+        description="Config-driven Excel data extractor.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python -m src.run_extractor --task ronec_source
+  python -m src.run_extractor --task perry_soft_source
+  python -m src.run_extractor --task all_perry_sheets --config config/custom_config.yaml
+        """
+    )
+    parser.add_argument(
+        '--config',
+        type=str,
+        default='config/extraction_config.yaml',
+        help='Path to the extraction config YAML file (default: config/extraction_config.yaml)'
+    )
+    parser.add_argument(
+        '--task',
+        type=str,
+        required=True,
+        help='The name of the extraction task to run from the config file'
+    )
 
-# Define new headers for target CSV
-target_headers = ['Datum', 'Cas_Vykonu_Od', 'Cas_Vykonu_Do', 'Prestavka_Trvanie', 'Popis_Cinnosti', 'Pocet_Odpracovanych_Hodin', 'Miesto_Vykonu', 'PH_Projekt_POO', 'PH_Riesenie_POO', 'PH_Mimo_Projekt_POO', 'SPOLU']
+    args = parser.parse_args()
 
-# Define a strategy to find the start row.
-# In this case, the data always begins at row 26.
-start_row_strategy = lambda header_row: 26
+    # Load the configuration file
+    if not os.path.exists(args.config):
+        print(f"Error: Configuration file '{args.config}' not found.")
+        sys.exit(1)
 
-# Define stop condition to halt extraction before including the "Spolu:" row
-def stop_for_spolu(row_data):
-    return len(row_data) > 4 and row_data[4] and "Spolu:" in str(row_data[4])
+    try:
+        with open(args.config, 'r', encoding='utf-8') as f:
+            all_configs = yaml.safe_load(f)
+    except Exception as e:
+        print(f"Error loading configuration file: {e}")
+        sys.exit(1)
 
-# Call the extraction function with the specified parameters.
-target_data = extract_data(
-    file_path='data/input/sadecky_vykaz.xlsx',
-    column_indices=[1, 2, 3, 4, [5, 6, 7, 8], 9, 10, 11, 12, 13, 14],
-    start_row_strategy=start_row_strategy,
-    stop_condition=stop_for_spolu
-)
+    # Look for the specified task
+    config = all_configs.get(args.task)
+    if not config:
+        available_tasks = ', '.join(all_configs.keys())
+        print(f"Error: Task '{args.task}' not found in configuration.")
+        print(f"Available tasks: {available_tasks}")
+        sys.exit(1)
 
-# Write to CSV
+    print(f"Starting extraction task: '{args.task}'")
+    print(f"Processing file: {config['file_path']}")
+    print(f"Output prefix: {config.get('output_prefix', 'extracted_data')}")
 
-# Write to CSV
-with open('extracted_sadecky_target_with_headers.csv', 'w', newline='') as csvfile:
-    writer = csv.writer(csvfile)
-    writer.writerow(target_headers)
-    for row in target_data:
-        writer.writerow(row)
+    try:
+        # Extract data from the workbook
+        results = extract_from_workbook(config)
 
-# Print the extracted data from the target file.
-print(f"Extracted {len(target_data)} records and saved to extracted_sadecky_target_with_headers.csv")
-print("-" * 40)
+        # Save the results
+        save_extraction_results(results, config)
+
+        # Report results
+        print("Extraction completed successfully!")
+        print(f"Processed {len(results)} sheet(s):")
+        for sheet_name, data in results.items():
+            print(f"  - {sheet_name}: {len(data)} records")
+
+    except Exception as e:
+        print(f"Error during extraction: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
