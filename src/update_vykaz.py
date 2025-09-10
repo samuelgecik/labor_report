@@ -341,7 +341,7 @@ def main():
     # Parse command line arguments with hardcoded defaults
     parser = argparse.ArgumentParser(description='Update Vykaz Script')
     parser.add_argument('--project', type=str, default='ronec', help='Project name (default: ronec)')
-    parser.add_argument('--month', type=str, default='July', help='Month (default: July)')
+    parser.add_argument('--month', type=str, default='júl', help='Month name in Slovak (default: júl)')
     parser.add_argument('--year', type=int, default=2025, help='Year (default: 2025)')
     args = parser.parse_args()
 
@@ -360,7 +360,7 @@ def main():
 
         # Define paths
         source_csv = 'extracted_source_with_headers.csv'
-        target_excel = f'data/input/{project}_vykaz.xlsx'
+        target_excel = '/home/gobi/vykazy/data/input/ronec_vykaz.xlsx'
 
         # Backup original Excel file with timestamp
         backup_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -413,6 +413,10 @@ def main():
         if wb is None or ws is None or header_row is None or data_start_row is None:
             exit(1)
         print("Load and Prepare Target Excel Structure completed successfully.")
+
+        # Update month in E13
+        ws['E13'] = args.month
+        print(f"Updated cell E13 with month: {args.month}")
 
         # Step 5: Update Daily Rows in Excel
         update_daily_rows(ws, df_target, data_start_row)
