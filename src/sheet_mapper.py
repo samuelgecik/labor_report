@@ -7,7 +7,7 @@ import os
 from datetime import date
 
 source_path = 'data/input/Dochádzka_JUL_2025_Perry_soft_.xlsx'
-target_path = 'data/input/09I05-03-V04_Príloha č. 3 Pracovné výkazy_04-2025_cleaned.xlsx'
+target_path = 'data/input/09I05-03-V04_Príloha č. 3 Pracovné výkazy_04-2025.xlsx'
 
 # Central list of instruction sheet names to exclude in mappings
 INSTRUCTION_SHEET_NAMES = {"Inštrukcie k vyplneniu PV", "Instrukcie k vyplneniu PV"}
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Map sheet names from source to target Excel files.')
     parser.add_argument('--source', default=source_path, help='Path to source Excel file')
     parser.add_argument('--target', default=target_path, help='Path to target Excel file')
-    parser.add_argument('--clean-target', action='store_true', default=False, help='Remove unmatched target sheets and save cleaned file')
+    parser.add_argument('--clean-target', action='store_true', default=True, help='Remove unmatched target sheets and save cleaned file')
     args = parser.parse_args()
 
     source_sheets = extract_sheet_names(args.source)
