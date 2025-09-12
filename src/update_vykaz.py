@@ -18,14 +18,24 @@ Implemented Phases (1–14):
 13. Placeholder utilities & custom exceptions (parsing helpers, duplicate handling).
 14. Edge case coverage (empty sheet, duplicate targets, lenient time parsing, save retry).
 
-Extensibility (Phase 16 groundwork):
- - Optional per-sheet activity overrides via `--activities-json` (JSON: {"SourceSheetName": "Custom text"}).
- - When present, overrides base activity text resolution for that source sheet.
+Extensibility (Phase 16):
+ - Per-sheet activity overrides via `--activities-json` (JSON: {"SourceSheetName": "Custom text"}).
+ - Generic metadata injection via `--metadata-json` (structure: {"SourceSheet": {"activity": "...", "Miesto_Vykonu": "HomeOffice"}}). Supported fields now:
+         * activity / activities: overrides activity description (same precedence as activities-json)
+         * Miesto_Vykonu: overrides Miesto_Vykonu column for all 31 rows
+     (Additional keys are carried through in mapping export for future use.)
+
+Performance (Phase 17):
+ - Single open per workbook retained; single consolidated save at end (already implemented earlier, documented now).
+
+Optional Enhancements (Phase 19 partial):
+ - `--only` flag to limit processed source sheets (comma-separated list or glob patterns).
+ - `--export-csv-dir` to dump per-target-sheet transformed CSV (debug / auditing) even during normal run (respects dry-run by still exporting unless suppressed).
 
 Not Yet Implemented (Future Plan):
- - Parallel extraction (performance) (Phase 19 / optional).
- - CLI `--only` filtering subset of sheets.
- - Per-sheet CSV debug exports.
+ - Parallel extraction (performance optimization).
+ - Additional metadata-driven column customizations.
+ - Calendar-aware variable month length.
  - Comprehensive unit tests for extraction strategies (current tests focus on core pipeline).
 
 Usage Example:
@@ -156,10 +166,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--activity-mode", choices=["infer", "static", "none"], default="infer", help="Strategy for activity description population (future use)")
     parser.add_argument("--month", type=int, default=None, help="Month number override (1-12)")
     parser.add_argument("--year", type=int, default=None, help="Year override (e.g. 2025)")
-    parser.add_argument("--dry-run", action="store_true", help="Run mapping & validation only; do not write workbook changes")
+    parser.add_argument("--dry-run", action="store_true", help="Run mapping & validation only; do not write workbook changes (still exports CSV if --export-csv-dir specified)")
     parser.add_argument("--clean-target", action="store_true", help="Remove unmatched target sheets before processing and use cleaned copy")
     parser.add_argument("--save-mappings-json", nargs="?", const=True, default=False, help="Save runtime mapping JSON (optionally specify output path)")
     parser.add_argument("--activities-json", help="Optional JSON file with per-sheet activity overrides { 'SourceSheet': 'Text' }")
+    parser.add_argument("--metadata-json", help="Optional JSON file providing per-sheet metadata { 'SourceSheet': { 'Miesto_Vykonu': 'HomeOffice', ... } }")
+    parser.add_argument("--only", help="Comma-separated list or glob patterns of source sheet names to process (others skipped)")
+    parser.add_argument("--export-csv-dir", help="If set, write transformed per-sheet CSVs for inspection (directory created if missing)")
 
     # Deprecated args (soft support to ease transition)
     parser.add_argument("--source_dir", help=argparse.SUPPRESS)
@@ -246,7 +259,7 @@ def build_runtime_mapping(source_excel: str, target_excel: str, clean_target: bo
     return mapping, unmatched_source, unmatched_target, effective_target
 
 
-def _save_mapping_json(mapping: Dict[str, str], unmatched_source: List[str], unmatched_target: List[str], output_dir: str, user_path: str | bool, activities: Optional[Dict[str, str]] = None):
+def _save_mapping_json(mapping: Dict[str, str], unmatched_source: List[str], unmatched_target: List[str], output_dir: str, user_path: str | bool, activities: Optional[Dict[str, str]] = None, metadata: Optional[Dict[str, Dict[str, Any]]] = None):
     os.makedirs(output_dir, exist_ok=True)
     if isinstance(user_path, str) and user_path not in ("True", "true", "FALSE", "False"):
         out_path = user_path
@@ -261,6 +274,8 @@ def _save_mapping_json(mapping: Dict[str, str], unmatched_source: List[str], unm
     }
     if activities:
         payload["activities"] = activities
+    if metadata:
+        payload["metadata"] = metadata
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     logging.info(f"Runtime mapping JSON saved: {out_path}")
@@ -304,9 +319,10 @@ def open_workbooks(source_excel: str, target_excel: str, backup_dir: str, dry_ru
 # Phase 4: Extraction Configuration Logic
 # ---------------------------------------
 DEFAULT_EXTRACTION_CONFIG = {
-    "column_indices": [1, 2, 3, 4, [5, 6, 7, 8], 9, 10, 11, 12, 13, 14],  # Example baseline
-    "header_text": None,
-    "header_row_offset": 1,
+    # Attendance-style defaults (works with Perry Soft attendance workbooks)
+    "column_indices": [1, 2, 3, 4, 5, 6, 7],
+    "header_text": "Dátum",
+    "header_row_offset": 2,
     "start_row_strategy": None,
     "stop_condition": None,
     "sheets": "__EACH__",  # Special marker meaning we'll supply sheet names individually
@@ -450,7 +466,7 @@ def _timedelta_to_hhmmss(seconds: int) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
-def transform_rows(raw_rows: List[List[Any]], source_sheet: str, activity_mode: str, month: int | None, year: int | None, activities_map: Optional[Dict[str, str]] = None) -> pd.DataFrame:
+def transform_rows(raw_rows: List[List[Any]], source_sheet: str, activity_mode: str, month: int | None, year: int | None, activities_map: Optional[Dict[str, str]] = None, metadata_map: Optional[Dict[str, Dict[str, Any]]] = None) -> pd.DataFrame:
     """Convert raw extracted rows (list of lists) to standardized target dataframe of 31 days.
 
     Assumptions (can be refined via configuration later):
@@ -540,6 +556,13 @@ def transform_rows(raw_rows: List[List[Any]], source_sheet: str, activity_mode: 
                 final_activity = desc_val
         else:
             final_activity = activity_text if activity_text and not desc_val else (desc_val or "")
+
+        # Metadata overrides (Miesto_Vykonu) - consistent for every row if defined
+        if metadata_map and source_sheet in metadata_map:
+            meta_entry = metadata_map[source_sheet]
+            mv_override = meta_entry.get("Miesto_Vykonu") or meta_entry.get("miesto_vykonu")
+            if mv_override:
+                miesto_val = mv_override
 
         df.loc[i, :] = [
             df.loc[i, "Datum"],
@@ -734,8 +757,23 @@ def main():  # noqa: D401
         else:
             logging.warning(f"Activities JSON not found: {args.activities_json}")
 
+    # Metadata JSON (Phase 16 extended)
+    metadata_map: Dict[str, Dict[str, Any]] | None = None
+    if getattr(args, "metadata_json", None):
+        if os.path.exists(args.metadata_json):
+            try:
+                with open(args.metadata_json, "r", encoding="utf-8") as f:
+                    md_raw = json.load(f)
+                if isinstance(md_raw, dict):
+                    metadata_map = {k: (v if isinstance(v, dict) else {"value": v}) for k, v in md_raw.items()}
+                logging.info(f"Loaded metadata entries: {len(metadata_map or {})}")
+            except Exception as e:
+                logging.warning(f"Failed loading metadata JSON '{args.metadata_json}': {e}")
+        else:
+            logging.warning(f"Metadata JSON not found: {args.metadata_json}")
+
     if args.save_mappings_json:
-        _save_mapping_json(mapping, unmatched_source, unmatched_target, args.output_dir, args.save_mappings_json, activities_overrides)
+        _save_mapping_json(mapping, unmatched_source, unmatched_target, args.output_dir, args.save_mappings_json, activities_overrides, metadata_map)
 
     # Summary of mapping
     print("\n=== Runtime Sheet Mapping Summary ===")
@@ -770,6 +808,20 @@ def main():  # noqa: D401
     transformed_counts = {}
 
     positive_mappings = {s: t for s, t in mapping.items() if s and t and t != '-'}
+
+    # Apply --only filtering if provided
+    if args.only:
+        import fnmatch
+        raw_filters = [f.strip() for f in args.only.split(',') if f.strip()]
+        filtered = {}
+        for s, t in positive_mappings.items():
+            if any(fnmatch.fnmatch(s, pattern) for pattern in raw_filters):
+                filtered[s] = t
+        skipped_due_to_only = set(positive_mappings.keys()) - set(filtered.keys())
+        for s in skipped_due_to_only:
+            logging.info(f"Skipping (filtered by --only): {s}")
+        positive_mappings = filtered
+        logging.info(f"--only applied. Remaining mappings: {len(positive_mappings)}")
     summary_metrics = {}
 
     # Log skipped mappings explicitly
@@ -803,8 +855,22 @@ def main():  # noqa: D401
             args.month,
             args.year,
             activities_overrides,
+            metadata_map,
         )
         transformed_counts[source_sheet] = len(df_target)
+
+        # Optional CSV export (debug/audit) - occurs even in dry-run
+        if args.export_csv_dir:
+            try:
+                os.makedirs(args.export_csv_dir, exist_ok=True)
+                def _safe_name(name: str) -> str:
+                    import re
+                    return re.sub(r'[^A-Za-z0-9_.-]+', '_', name)
+                csv_path = os.path.join(args.export_csv_dir, f"{_safe_name(target_sheet)}.csv")
+                df_target.to_csv(csv_path, index=False)
+                logging.info(f"Exported transformed CSV: {csv_path}")
+            except Exception as e:
+                logging.warning(f"CSV export failed for sheet '{target_sheet}': {e}")
 
         if args.dry_run:
             logging.info(
