@@ -69,22 +69,16 @@ from datetime import datetime, time, timedelta
 from time import sleep
 from typing import Dict, List, Tuple, Any, Optional
 import pandas as pd
+from src import sheet_mapper
 
 from openpyxl import load_workbook
+
+from src.extractor_utils import STRATEGY_REGISTRY, extract_data
 
 try:
     import yaml  # For extraction configuration
 except ImportError:  # pragma: no cover - handled gracefully at runtime
     yaml = None
-
-# Reuse mapping helpers from existing sheet_mapper module
-try:
-    from src import sheet_mapper  # package-relative import
-except ImportError:
-    try:
-        import sheet_mapper  # fallback to local
-    except ImportError as e:  # Fallback / clear message
-        raise SystemExit(f"Failed to import sheet_mapper module: {e}")
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 # Allow dynamic log level via env var (VYKAZY_LOG_LEVEL)
@@ -377,8 +371,7 @@ def build_sheet_extraction_args(sheet_name: str, cfg: Dict[str, Any]) -> Dict[st
 # ------------------------------------
 def extract_sheet_data(source_excel: str, sheet_name: str, extraction_args: Dict[str, Any]) -> List[List[Any]]:
     """Extract raw rows for a single sheet using extract_data API."""
-    from src.excel_extractor.extract import extract_data  # Local import to avoid circular refs
-    from src.extractor_utils import STRATEGY_REGISTRY
+    
 
     start_strategy_key = extraction_args.get("start_row_strategy")
     stop_condition_key = extraction_args.get("stop_condition")

@@ -1,9 +1,13 @@
 """
 Reusable utility functions for extracting data from Excel workbooks.
+
+This module now contains both:
+ - Low-level extract_data implementation (migrated from src/extract.py)
+ - Higher-level helpers (strategy registry, multi-sheet extraction, CSV saving)
 """
 
-from typing import Dict, List, Any
-from .excel_extractor.extract import extract_data
+from typing import Dict, List, Any, Union
+from openpyxl import load_workbook
 
 
 # Strategy Registry for callable functions
@@ -11,6 +15,112 @@ STRATEGY_REGISTRY = {
     "fixed_26": lambda header_row: 26,
     "stop_for_spolu": lambda row_data: len(row_data) > 4 and row_data[4] and "Spolu:" in str(row_data[4])
 }
+
+
+# -------------------------------
+# Low-level extraction primitives
+# -------------------------------
+def _find_cell_by_text(sheet, search_texts: List[str]):
+    """Find first cell containing any provided search strings; returns (row, col) 1-based or None."""
+    for row in sheet.iter_rows():
+        for cell in row:
+            if cell.value:
+                cell_str = str(cell.value).lower()
+                for text in search_texts:
+                    if text.lower() in cell_str:
+                        return (cell.row, cell.column)
+    return None
+
+
+def _get_real_cell_value(sheet, row: int, col: int):
+    """Return cell value, following merged ranges to the top-left cell when applicable."""
+    cell = sheet.cell(row, col)
+    for merged_range in sheet.merged_cells.ranges:
+        if (merged_range.min_row <= row <= merged_range.max_row and
+            merged_range.min_col <= col <= merged_range.max_col):
+            return sheet.cell(merged_range.min_row, merged_range.min_col).value
+    return cell.value
+
+
+def extract_data(
+    file_path: str,
+    column_indices: List[Union[int, List[int]]],
+    header_text: str | None = None,
+    start_row_strategy=None,
+    header_row_offset: int = 1,
+    stop_condition: callable = None,
+    sheet_name: str = None,
+) -> List[List[Any]]:
+    """Extract values from selected columns of an Excel sheet with optional header/start/stop logic."""
+    wb = load_workbook(file_path, data_only=True)
+    if sheet_name:
+        try:
+            sheet = wb[sheet_name]
+        except KeyError:
+            wb.close()
+            raise ValueError(f"Sheet '{sheet_name}' not found in {file_path}. Available sheets: {list(wb.sheetnames)}")
+    else:
+        sheet = wb.active
+
+    # Determine header position and starting column
+    if header_text:
+        pos = _find_cell_by_text(sheet, [header_text])
+        if pos:
+            header_row = pos[0]
+            starting_col = pos[1]
+        else:
+            header_row = 1
+            starting_col = 1
+    else:
+        header_row = 1
+        starting_col = 1
+
+    # Determine start row
+    start_row = start_row_strategy(header_row) if start_row_strategy else (header_row + header_row_offset)
+
+    # Row extraction loop
+    data: List[List[Any]] = []
+    row = start_row
+    while row <= sheet.max_row:
+        row_data: List[Any] = []
+        for col_idx in column_indices:
+            if isinstance(col_idx, int):
+                actual_col = starting_col + (col_idx - 1)
+                value = _get_real_cell_value(sheet, row, actual_col)
+            elif isinstance(col_idx, list):
+                value = None
+                dovolenka_found = False
+                for inner_col_idx in col_idx:
+                    actual_inner_col = starting_col + (inner_col_idx - 1)
+                    cell_value = _get_real_cell_value(sheet, row, actual_inner_col)
+                    if cell_value is not None and "Dovolenka" in str(cell_value):
+                        value = cell_value
+                        dovolenka_found = True
+                        break
+                if not dovolenka_found:
+                    for inner_col_idx in col_idx:
+                        actual_inner_col = starting_col + (inner_col_idx - 1)
+                        cell_value = _get_real_cell_value(sheet, row, actual_inner_col)
+                        if cell_value is not None and str(cell_value).strip():
+                            value = cell_value
+                            break
+            else:
+                value = None
+            row_data.append(value)
+
+        # Evaluate stop condition before storing row
+        if stop_condition and stop_condition(row_data):
+            break
+
+        # If row contains any non-None value, keep it; else stop on first empty row
+        if any(v is not None for v in row_data):
+            data.append(row_data)
+        else:
+            break
+        row += 1
+
+    wb.close()
+    return data
 
 
 def extract_from_workbook(config: Dict[str, Any]) -> Dict[str, List[List[Any]]]:
