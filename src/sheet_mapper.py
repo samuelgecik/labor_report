@@ -7,7 +7,7 @@ import os
 from datetime import date
 
 source_path = 'data/input/Dochádzka_JUL_2025_Perry_soft_.xlsx'
-target_path = 'data/input/09I05-03-V04_Príloha č. 3 Pracovné výkazy_04-2025.xlsx'
+target_path = 'data/input/09I05-03-V04_Príloha č. 3 Pracovné výkazy_04-2025_cleaned.xlsx'
 
 def extract_sheet_names(path):
     try:
@@ -58,10 +58,24 @@ def create_mapping(source_sheets, target_sheets):
     unmatched_target = [f"{t} -> -" for t in unmatched_target]
     return mapping, unmatched_source, unmatched_target
 
+def remove_unmatched_target_sheets(target_path, unmatched_target):
+    wb = openpyxl.load_workbook(target_path)
+    sheets_to_remove = [name.split(" -> -")[0] for name in unmatched_target]
+    for sheet_name in sheets_to_remove:
+        if sheet_name in wb.sheetnames:
+            wb.remove(wb[sheet_name])
+    base, ext = os.path.splitext(target_path)
+    cleaned_path = base + '_cleaned' + ext
+    wb.save(cleaned_path)
+    wb.close()
+    return cleaned_path
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Map sheet names from source to target Excel files.')
     parser.add_argument('--source', default=source_path, help='Path to source Excel file')
     parser.add_argument('--target', default=target_path, help='Path to target Excel file')
+    parser.add_argument('--clean-target', action='store_true', default=False, help='Remove unmatched target sheets and save cleaned file')
     args = parser.parse_args()
 
     source_sheets = extract_sheet_names(args.source)
@@ -88,7 +102,10 @@ if __name__ == "__main__":
         print("Unmatched target sheets:")
         for unmatched in unmatched_target:
             print(unmatched)
-
+    if args.clean_target and unmatched_target:
+        cleaned_file = remove_unmatched_target_sheets(args.target, unmatched_target)
+        print(f"Cleaned target file saved to {cleaned_file}")
+    
     data = {
         "mappings": mapping,
         "unmatched_source": unmatched_source,
