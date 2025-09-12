@@ -9,13 +9,16 @@ import argparse
 import sys
 import os
 
+# Add parent directory to path for relative imports
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
 try:
     import yaml
 except ImportError:
     print("Error: PyYAML library not found. Install with 'pip install pyyaml'")
     sys.exit(1)
 
-from .extractor_utils import extract_from_workbook, save_extraction_results
+from src.extractor_utils import extract_from_workbook, save_extraction_results
 
 
 def main():
