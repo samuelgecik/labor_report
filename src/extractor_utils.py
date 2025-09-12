@@ -3,7 +3,7 @@ Reusable utility functions for extracting data from Excel workbooks.
 """
 
 from typing import Dict, List, Any
-from .excel_extractor.main import extract_data
+from .excel_extractor.extract import extract_data
 
 
 # Strategy Registry for callable functions
