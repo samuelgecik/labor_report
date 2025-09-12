@@ -94,6 +94,46 @@ def remove_unmatched_target_sheets(target_path, unmatched_target):
     wb.close()
     return cleaned_path
 
+def save_mapping_json(mapping, unmatched_source, unmatched_target, output_dir, user_path, activities=None, metadata=None):
+    """Save runtime mapping data to JSON file with activities and metadata.
+
+    Args:
+        mapping: Dict mapping source sheet names to target sheet names
+        unmatched_source: List of unmatched source sheet entries  
+        unmatched_target: List of unmatched target sheet entries
+        output_dir: Output directory for JSON file
+        user_path: User-specified path or True/False for auto-naming
+        activities: Optional dict of activity overrides per sheet
+        metadata: Optional dict of metadata per sheet
+
+    Returns path to saved JSON file.
+    """
+    from datetime import datetime
+    
+    os.makedirs(output_dir, exist_ok=True)
+    if isinstance(user_path, str) and user_path not in ("True", "true", "FALSE", "False"):
+        out_path = user_path
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = os.path.join(output_dir, f"mappings_runtime_{timestamp}.json")
+    
+    payload = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "mapping": mapping,
+        "unmatched_source": unmatched_source,
+        "unmatched_target": unmatched_target,
+    }
+    if activities:
+        payload["activities"] = activities
+    if metadata:
+        payload["metadata"] = metadata
+    
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    
+    print(f"Runtime mapping JSON saved: {out_path}")
+    return out_path
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Map sheet names from source to target Excel files.')
