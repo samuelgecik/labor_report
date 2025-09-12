@@ -204,37 +204,9 @@ def build_runtime_mapping(source_excel: str, target_excel: str, clean_target: bo
 
     effective_target = target_excel
     if clean_target:
-        logging.info("Clean-target flag active. Producing cleaned workbook copy...")
-        target_only_names = [t.split(' -> -')[0] for t in unmatched_target]
-        from openpyxl import load_workbook as _lw
-        base, ext = os.path.splitext(target_excel)
-        effective_target = base + '_cleaned' + ext
-        wb_tmp = _lw(target_excel)
-        # If all target sheets are unmatched, retain the first as template and remove the rest.
-        if target_only_names and len(target_only_names) == len(target_sheets):
-            keep = target_only_names[0]
-            removed = []
-            for sheet_name in target_only_names[1:]:
-                if sheet_name in wb_tmp.sheetnames:
-                    wb_tmp.remove(wb_tmp[sheet_name])
-                    removed.append(sheet_name)
-            wb_tmp.save(effective_target)
-            wb_tmp.close()
-            logging.info(f"All targets unmatched. Kept template '{keep}', removed {removed}. Cleaned workbook: {effective_target}")
-        elif target_only_names:
-            # Remove each unmatched sheet
-            removed = []
-            for sheet_name in target_only_names:
-                if sheet_name in wb_tmp.sheetnames:
-                    wb_tmp.remove(wb_tmp[sheet_name])
-                    removed.append(sheet_name)
-            wb_tmp.save(effective_target)
-            wb_tmp.close()
-            logging.info(f"Removed unmatched sheets: {removed}. Cleaned workbook: {effective_target}")
-        else:
-            wb_tmp.save(effective_target)
-            wb_tmp.close()
-            logging.info(f"No unmatched targets; duplicated workbook as: {effective_target}")
+        logging.info("Clean-target flag active. Producing cleaned workbook copy via sheet_mapper...")
+        effective_target = sheet_mapper.remove_unmatched_target_sheets(target_excel, unmatched_target)
+        logging.info(f"Cleaned workbook: {effective_target}")
 
     # Log concise summary
     pos_mappings = {k: v for k, v in mapping.items() if v != '-'}
