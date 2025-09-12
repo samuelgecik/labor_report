@@ -65,6 +65,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     source_sheets = extract_sheet_names(args.source)
+    source_sheets = [sheet for sheet in source_sheets if sheet != "Inštrukcie k vyplneniu PV"]
     target_sheets = extract_sheet_names(args.target)
 
     if not source_sheets:
