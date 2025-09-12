@@ -9,6 +9,9 @@ from datetime import date
 source_path = 'data/input/Dochádzka_JUL_2025_Perry_soft_.xlsx'
 target_path = 'data/input/09I05-03-V04_Príloha č. 3 Pracovné výkazy_04-2025_cleaned.xlsx'
 
+# Central list of instruction sheet names to exclude in mappings
+INSTRUCTION_SHEET_NAMES = {"Inštrukcie k vyplneniu PV", "Instrukcie k vyplneniu PV"}
+
 def extract_sheet_names(path):
     try:
         wb = openpyxl.load_workbook(path)
@@ -21,6 +24,13 @@ def extract_sheet_names(path):
     except Exception as e:
         print(f"Error loading {path}: {e}")
         return []
+
+def filter_instruction_sheets(sheet_names):
+    """Return a new list without instruction sheets.
+
+    Uses INSTRUCTION_SHEET_NAMES to filter out non-data sheets.
+    """
+    return [s for s in sheet_names if s not in INSTRUCTION_SHEET_NAMES]
 
 def _remove_titles(name):
     prefixes = ['Ing.', 'Bc.', 'Mgr.', 'PhD.', 'prof.', 'MUDr.', 'RNDr.']
@@ -79,7 +89,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     source_sheets = extract_sheet_names(args.source)
-    source_sheets = [sheet for sheet in source_sheets if sheet != "Inštrukcie k vyplneniu PV"]
+    source_sheets = filter_instruction_sheets(source_sheets)
     target_sheets = extract_sheet_names(args.target)
 
     if not source_sheets:

@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import yaml
 import logging
 import os
 from datetime import datetime, time, timedelta
@@ -75,10 +76,6 @@ from openpyxl import load_workbook
 
 from src.extractor_utils import STRATEGY_REGISTRY, extract_data
 
-try:
-    import yaml  # For extraction configuration
-except ImportError:  # pragma: no cover - handled gracefully at runtime
-    yaml = None
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 # Allow dynamic log level via env var (VYKAZY_LOG_LEVEL)
@@ -89,8 +86,6 @@ if _env_level:
     except Exception:  # pragma: no cover
         logging.warning(f"Invalid VYKAZY_LOG_LEVEL '{_env_level}', keeping default INFO")
 
-
-INSTRUCTION_SHEET_NAMES = {"Inštrukcie k vyplneniu PV", "Instrukcie k vyplneniu PV"}
 
 
 # ------------------------------------
@@ -182,11 +177,6 @@ def parse_args() -> argparse.Namespace:
 
     return args
 
-
-def _filter_instruction_sheets(sheet_names: List[str]) -> List[str]:
-    return [s for s in sheet_names if s not in INSTRUCTION_SHEET_NAMES]
-
-
 def build_runtime_mapping(source_excel: str, target_excel: str, clean_target: bool) -> Tuple[Dict[str, str], List[str], List[str], str]:
     """Create sheet name mapping at runtime, optionally clean target workbook.
 
@@ -201,7 +191,7 @@ def build_runtime_mapping(source_excel: str, target_excel: str, clean_target: bo
     if not target_sheets:
         raise SystemExit(f"No sheets found in target workbook: {target_excel}")
 
-    source_sheets = _filter_instruction_sheets(source_sheets)
+    source_sheets = sheet_mapper.filter_instruction_sheets(source_sheets)
 
     mapping, unmatched_source, unmatched_target = sheet_mapper.create_mapping(source_sheets, target_sheets)
 
