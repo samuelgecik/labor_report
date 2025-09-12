@@ -1,64 +1,3 @@
-"""update_vykaz.py
-
-Modernized runtime-driven update pipeline for labor report ("Vykaz") workbooks.
-
-Implemented Phases (1–14):
- 1. CLI argument refactor (runtime sheet mapping, cleaning, dry-run, activity modes).
- 2. In-memory sheet mapping via `sheet_mapper.create_mapping` (no static JSON dependency).
- 3. Workbook handling (single open pass, backup management).
- 4. Extraction configuration loading (YAML + defaults merge).
- 5. Per-sheet extraction wrapper (error-resilient).
- 6. Transformation into standardized 31-row schema (time parsing, padding, activity inference).
- 7. Target sheet preparation (template duplication + region clearing).
- 8. Data writing with controlled merged description columns.
- 9. Summary recalculation (working days + total hours).
-10. Structured logging & diagnostics.
-11. Single final save + versioned copy (retry on PermissionError).
-12. Modular function boundaries for maintainability.
-13. Placeholder utilities & custom exceptions (parsing helpers, duplicate handling).
-14. Edge case coverage (empty sheet, duplicate targets, lenient time parsing, save retry).
-
-Extensibility (Phase 16):
- - Per-sheet activity overrides via `--activities-json` (JSON: {"SourceSheetName": "Custom text"}).
- - Generic metadata injection via `--metadata-json` (structure: {"SourceSheet": {"activity": "...", "Miesto_Vykonu": "HomeOffice"}}). Supported fields now:
-         * activity / activities: overrides activity description (same precedence as activities-json)
-         * Miesto_Vykonu: overrides Miesto_Vykonu column for all 31 rows
-     (Additional keys are carried through in mapping export for future use.)
-
-Performance (Phase 17):
- - Single open per workbook retained; single consolidated save at end (already implemented earlier, documented now).
-
-Optional Enhancements (Phase 19 partial):
- - `--only` flag to limit processed source sheets (comma-separated list or glob patterns).
- - `--export-csv-dir` to dump per-target-sheet transformed CSV (debug / auditing) even during normal run (respects dry-run by still exporting unless suppressed).
-
-Not Yet Implemented (Future Plan):
- - Parallel extraction (performance optimization).
- - Additional metadata-driven column customizations.
- - Calendar-aware variable month length.
- - Comprehensive unit tests for extraction strategies (current tests focus on core pipeline).
-
-Usage Example:
-    python -m src.update_vykaz \\
-            --source-excel data/input/source.xlsx \\
-            --target-excel data/input/vykaz.xlsx \\
-            --clean-target \\
-            --save-mappings-json \\
-            --activities-json config/activities.json
-
-Environment Overrides:
-    VYKAZY_LOG_LEVEL=DEBUG  (verbose logging)
-
-Mapping JSON (audit) structure produced when --save-mappings-json:
-{
-    "generated_at": "...Z",
-    "mapping": {"SourceSheet": "TargetSheet", ...},
-    "unmatched_source": ["Name -> -", ...],
-    "unmatched_target": ["Name -> -", ...],
-    "activities": {"SourceSheet": "Custom Activity Text", ...}
-}
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -206,29 +145,6 @@ def build_runtime_mapping(source_excel: str, target_excel: str, clean_target: bo
     logging.info(f"Positive mappings: {len(pos_mappings)} | Unmatched source: {len(unmatched_source)} | Unmatched target: {len(unmatched_target)}")
 
     return mapping, unmatched_source, unmatched_target, effective_target
-
-
-def _save_mapping_json(mapping: Dict[str, str], unmatched_source: List[str], unmatched_target: List[str], output_dir: str, user_path: str | bool, activities: Optional[Dict[str, str]] = None, metadata: Optional[Dict[str, Dict[str, Any]]] = None):
-    os.makedirs(output_dir, exist_ok=True)
-    if isinstance(user_path, str) and user_path not in ("True", "true", "FALSE", "False"):
-        out_path = user_path
-    else:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_path = os.path.join(output_dir, f"mappings_runtime_{timestamp}.json")
-    payload = {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
-        "mapping": mapping,
-        "unmatched_source": unmatched_source,
-        "unmatched_target": unmatched_target,
-    }
-    if activities:
-        payload["activities"] = activities
-    if metadata:
-        payload["metadata"] = metadata
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    logging.info(f"Runtime mapping JSON saved: {out_path}")
-    logging.debug("Mapping file is for audit only; in-memory mapping will be used for further steps.")
 
 
 # -----------------------------
@@ -721,7 +637,7 @@ def main():  # noqa: D401
             logging.warning(f"Metadata JSON not found: {args.metadata_json}")
 
     if args.save_mappings_json:
-        _save_mapping_json(mapping, unmatched_source, unmatched_target, args.output_dir, args.save_mappings_json, activities_overrides, metadata_map)
+        sheet_mapper.save_mapping_json(mapping, unmatched_source, unmatched_target, args.output_dir, args.save_mappings_json, activities_overrides, metadata_map)
 
     # Summary of mapping
     print("\n=== Runtime Sheet Mapping Summary ===")
