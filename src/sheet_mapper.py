@@ -22,7 +22,7 @@ def extract_sheet_names(path):
         print(f"Error loading {path}: {e}")
         return []
 
-def remove_titles(name):
+def _remove_titles(name):
     prefixes = ['Ing.', 'Bc.', 'Mgr.', 'PhD.', 'prof.', 'MUDr.', 'RNDr.']
     for prefix in prefixes:
         if name.startswith(prefix + ' '):
@@ -30,18 +30,18 @@ def remove_titles(name):
             break
     return name
 
-def normalize_name(name):
-    name = remove_titles(name)
+def _normalize_name(name):
+    name = _remove_titles(name)
     name = unicodedata.normalize('NFD', name).encode('ascii', 'ignore').decode('ascii')
     return name.strip().lower()
 
 def create_mapping(source_sheets, target_sheets):
     mapping = {}
     unmatched_source = []
-    norm_targets = [normalize_name(t) for t in target_sheets]
+    norm_targets = [_normalize_name(t) for t in target_sheets]
     used_targets = set()
     for source in source_sheets:
-        norm_source = normalize_name(source)
+        norm_source = _normalize_name(source)
         if norm_source in norm_targets:
             matched = target_sheets[norm_targets.index(norm_source)]
             used_targets.add(matched)
