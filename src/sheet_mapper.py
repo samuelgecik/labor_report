@@ -69,11 +69,25 @@ def create_mapping(source_sheets, target_sheets):
     return mapping, unmatched_source, unmatched_target
 
 def remove_unmatched_target_sheets(target_path, unmatched_target):
+    """Create a cleaned copy of target workbook without unmatched sheets.
+
+    Ensures at least one sheet remains: if all target sheets are marked unmatched,
+    the first one is kept as a template and the rest are removed.
+
+    Returns path to the cleaned workbook ("*_cleaned.xlsx").
+    """
     wb = openpyxl.load_workbook(target_path)
     sheets_to_remove = [name.split(" -> -")[0] for name in unmatched_target]
-    for sheet_name in sheets_to_remove:
-        if sheet_name in wb.sheetnames:
-            wb.remove(wb[sheet_name])
+    # If all sheets would be removed, keep the first as template
+    if sheets_to_remove and set(sheets_to_remove) >= set(wb.sheetnames):
+        keep = sheets_to_remove[0]
+        for sheet_name in sheets_to_remove[1:]:
+            if sheet_name in wb.sheetnames:
+                wb.remove(wb[sheet_name])
+    else:
+        for sheet_name in sheets_to_remove:
+            if sheet_name in wb.sheetnames:
+                wb.remove(wb[sheet_name])
     base, ext = os.path.splitext(target_path)
     cleaned_path = base + '_cleaned' + ext
     wb.save(cleaned_path)
