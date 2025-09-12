@@ -1,13 +1,52 @@
-"""Refactored update_vykaz.py (Phases implemented: Steps 1-5)
+"""update_vykaz.py
 
-Completed:
- 1. Argument parsing with new flags.
- 2. Runtime mapping construction (and optional target cleaning) using sheet names.
- 3. Workbook handling (open source read-only, open target, optional backup).
- 4. Extraction configuration loading (YAML or default fallback).
- 5. Per-sheet data extraction loop (extraction only, no transformation yet).
+Modernized runtime-driven update pipeline for labor report ("Vykaz") workbooks.
 
-Pending (next phases): transformation, sheet preparation, writing, summaries.
+Implemented Phases (1–14):
+ 1. CLI argument refactor (runtime sheet mapping, cleaning, dry-run, activity modes).
+ 2. In-memory sheet mapping via `sheet_mapper.create_mapping` (no static JSON dependency).
+ 3. Workbook handling (single open pass, backup management).
+ 4. Extraction configuration loading (YAML + defaults merge).
+ 5. Per-sheet extraction wrapper (error-resilient).
+ 6. Transformation into standardized 31-row schema (time parsing, padding, activity inference).
+ 7. Target sheet preparation (template duplication + region clearing).
+ 8. Data writing with controlled merged description columns.
+ 9. Summary recalculation (working days + total hours).
+10. Structured logging & diagnostics.
+11. Single final save + versioned copy (retry on PermissionError).
+12. Modular function boundaries for maintainability.
+13. Placeholder utilities & custom exceptions (parsing helpers, duplicate handling).
+14. Edge case coverage (empty sheet, duplicate targets, lenient time parsing, save retry).
+
+Extensibility (Phase 16 groundwork):
+ - Optional per-sheet activity overrides via `--activities-json` (JSON: {"SourceSheetName": "Custom text"}).
+ - When present, overrides base activity text resolution for that source sheet.
+
+Not Yet Implemented (Future Plan):
+ - Parallel extraction (performance) (Phase 19 / optional).
+ - CLI `--only` filtering subset of sheets.
+ - Per-sheet CSV debug exports.
+ - Comprehensive unit tests for extraction strategies (current tests focus on core pipeline).
+
+Usage Example:
+    python -m src.update_vykaz \\
+            --source-excel data/input/source.xlsx \\
+            --target-excel data/input/vykaz.xlsx \\
+            --clean-target \\
+            --save-mappings-json \\
+            --activities-json config/activities.json
+
+Environment Overrides:
+    VYKAZY_LOG_LEVEL=DEBUG  (verbose logging)
+
+Mapping JSON (audit) structure produced when --save-mappings-json:
+{
+    "generated_at": "...Z",
+    "mapping": {"SourceSheet": "TargetSheet", ...},
+    "unmatched_source": ["Name -> -", ...],
+    "unmatched_target": ["Name -> -", ...],
+    "activities": {"SourceSheet": "Custom Activity Text", ...}
+}
 """
 
 from __future__ import annotations
@@ -17,7 +56,8 @@ import json
 import logging
 import os
 from datetime import datetime, time, timedelta
-from typing import Dict, List, Tuple, Any
+from time import sleep
+from typing import Dict, List, Tuple, Any, Optional
 import pandas as pd
 
 from openpyxl import load_workbook
@@ -29,14 +69,70 @@ except ImportError:  # pragma: no cover - handled gracefully at runtime
 
 # Reuse mapping helpers from existing sheet_mapper module
 try:
-    import sheet_mapper  # Local module in same directory
-except ImportError as e:  # Fallback / clear message
-    raise SystemExit(f"Failed to import sheet_mapper module: {e}")
+    from src import sheet_mapper  # package-relative import
+except ImportError:
+    try:
+        import sheet_mapper  # fallback to local
+    except ImportError as e:  # Fallback / clear message
+        raise SystemExit(f"Failed to import sheet_mapper module: {e}")
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+# Allow dynamic log level via env var (VYKAZY_LOG_LEVEL)
+_env_level = os.getenv("VYKAZY_LOG_LEVEL")
+if _env_level:
+    try:
+        logging.getLogger().setLevel(_env_level.upper())
+    except Exception:  # pragma: no cover
+        logging.warning(f"Invalid VYKAZY_LOG_LEVEL '{_env_level}', keeping default INFO")
 
 
 INSTRUCTION_SHEET_NAMES = {"Inštrukcie k vyplneniu PV", "Instrukcie k vyplneniu PV"}
+
+
+# ------------------------------------
+# Phase 13: Placeholder Implementations & Utilities
+# ------------------------------------
+
+class MappingError(Exception):
+    """Raised when critical mapping inconsistencies are detected."""
+
+
+class WorkbookLockedError(Exception):
+    """Raised when the workbook cannot be saved due to a file lock."""
+
+
+class TimeParseError(Exception):
+    """Raised when a time string cannot be parsed with expected formats."""
+
+
+def parse_filename(filename: str) -> dict:
+    """Parse filename for project/month/year hints (best-effort).
+
+    Pattern: <project>_<month|mon>_<year>.*  (flexible, heuristic)
+    Returns partial dict; failures are non-fatal.
+    """
+    base = os.path.basename(filename)
+    stem = os.path.splitext(base)[0]
+    parts = stem.split('_')
+    result: dict[str, Any] = {}
+    if len(parts) >= 3:
+        try:
+            year_candidate = int(parts[-1])
+            result['year'] = year_candidate
+            result['month_raw'] = parts[-2]
+            result['project'] = '_'.join(parts[:-2])
+        except ValueError:
+            result['project'] = parts[0]
+    return result
+
+
+def get_sheet_name(raw_name: str) -> str:
+    """Normalize sheet/person name by removing titles."""
+    try:
+        cleaned = sheet_mapper._remove_titles(raw_name)  # type: ignore
+    except Exception:
+        cleaned = raw_name
+    return cleaned.strip()
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,6 +159,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Run mapping & validation only; do not write workbook changes")
     parser.add_argument("--clean-target", action="store_true", help="Remove unmatched target sheets before processing and use cleaned copy")
     parser.add_argument("--save-mappings-json", nargs="?", const=True, default=False, help="Save runtime mapping JSON (optionally specify output path)")
+    parser.add_argument("--activities-json", help="Optional JSON file with per-sheet activity overrides { 'SourceSheet': 'Text' }")
 
     # Deprecated args (soft support to ease transition)
     parser.add_argument("--source_dir", help=argparse.SUPPRESS)
@@ -101,11 +198,46 @@ def build_runtime_mapping(source_excel: str, target_excel: str, clean_target: bo
 
     mapping, unmatched_source, unmatched_target = sheet_mapper.create_mapping(source_sheets, target_sheets)
 
+    # Fallback: propose cleaned sheet names for unmatched sources so we can create new target sheets dynamically
+    for src_name, tgt in list(mapping.items()):
+        if tgt == '-' or not tgt:
+            proposed = get_sheet_name(src_name)
+            if proposed and proposed not in target_sheets:
+                mapping[src_name] = proposed  # will be created later if missing
+
     effective_target = target_excel
-    if clean_target and unmatched_target:
-        logging.info("Cleaning unmatched target sheets before processing...")
-        effective_target = sheet_mapper.remove_unmatched_target_sheets(target_excel, unmatched_target)
-        logging.info(f"Using cleaned target workbook: {effective_target}")
+    if clean_target:
+        logging.info("Clean-target flag active. Producing cleaned workbook copy...")
+        target_only_names = [t.split(' -> -')[0] for t in unmatched_target]
+        from openpyxl import load_workbook as _lw
+        base, ext = os.path.splitext(target_excel)
+        effective_target = base + '_cleaned' + ext
+        wb_tmp = _lw(target_excel)
+        # If all target sheets are unmatched, retain the first as template and remove the rest.
+        if target_only_names and len(target_only_names) == len(target_sheets):
+            keep = target_only_names[0]
+            removed = []
+            for sheet_name in target_only_names[1:]:
+                if sheet_name in wb_tmp.sheetnames:
+                    wb_tmp.remove(wb_tmp[sheet_name])
+                    removed.append(sheet_name)
+            wb_tmp.save(effective_target)
+            wb_tmp.close()
+            logging.info(f"All targets unmatched. Kept template '{keep}', removed {removed}. Cleaned workbook: {effective_target}")
+        elif target_only_names:
+            # Remove each unmatched sheet
+            removed = []
+            for sheet_name in target_only_names:
+                if sheet_name in wb_tmp.sheetnames:
+                    wb_tmp.remove(wb_tmp[sheet_name])
+                    removed.append(sheet_name)
+            wb_tmp.save(effective_target)
+            wb_tmp.close()
+            logging.info(f"Removed unmatched sheets: {removed}. Cleaned workbook: {effective_target}")
+        else:
+            wb_tmp.save(effective_target)
+            wb_tmp.close()
+            logging.info(f"No unmatched targets; duplicated workbook as: {effective_target}")
 
     # Log concise summary
     pos_mappings = {k: v for k, v in mapping.items() if v != '-'}
@@ -114,7 +246,7 @@ def build_runtime_mapping(source_excel: str, target_excel: str, clean_target: bo
     return mapping, unmatched_source, unmatched_target, effective_target
 
 
-def _save_mapping_json(mapping: Dict[str, str], unmatched_source: List[str], unmatched_target: List[str], output_dir: str, user_path: str | bool):
+def _save_mapping_json(mapping: Dict[str, str], unmatched_source: List[str], unmatched_target: List[str], output_dir: str, user_path: str | bool, activities: Optional[Dict[str, str]] = None):
     os.makedirs(output_dir, exist_ok=True)
     if isinstance(user_path, str) and user_path not in ("True", "true", "FALSE", "False"):
         out_path = user_path
@@ -127,6 +259,8 @@ def _save_mapping_json(mapping: Dict[str, str], unmatched_source: List[str], unm
         "unmatched_source": unmatched_source,
         "unmatched_target": unmatched_target,
     }
+    if activities:
+        payload["activities"] = activities
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     logging.info(f"Runtime mapping JSON saved: {out_path}")
@@ -288,7 +422,17 @@ def _parse_time(val: Any) -> time | None:
     if val in (None, "", "-"):
         return None
     s = str(val).strip()
-    for fmt in ("%H:%M:%S", "%H:%M"):
+    # Support a few extra lenient variants (with trailing spaces or decimal hour e.g. 7.5)
+    if s.replace('.', '', 1).isdigit() and '.' in s:
+        try:
+            hours_float = float(s)
+            total_seconds = int(hours_float * 3600)
+            h = total_seconds // 3600
+            m = (total_seconds % 3600) // 60
+            return time(hour=min(h, 23), minute=m)
+        except Exception:
+            pass
+    for fmt in ("%H:%M:%S", "%H:%M", "%H.%M"):
         try:
             dt = datetime.strptime(s, fmt)
             return dt.time()
@@ -306,7 +450,7 @@ def _timedelta_to_hhmmss(seconds: int) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
-def transform_rows(raw_rows: List[List[Any]], source_sheet: str, activity_mode: str, month: int | None, year: int | None) -> pd.DataFrame:
+def transform_rows(raw_rows: List[List[Any]], source_sheet: str, activity_mode: str, month: int | None, year: int | None, activities_map: Optional[Dict[str, str]] = None) -> pd.DataFrame:
     """Convert raw extracted rows (list of lists) to standardized target dataframe of 31 days.
 
     Assumptions (can be refined via configuration later):
@@ -326,13 +470,17 @@ def transform_rows(raw_rows: List[List[Any]], source_sheet: str, activity_mode: 
     df = pd.DataFrame(columns=TARGET_COLUMNS, index=range(31))
     df["Datum"] = [f"{i+1}." for i in range(31)]
 
-    if activity_mode == "infer":
-        activity_text = _clean_activity_name(source_sheet)
-    elif activity_mode == "static":
-        activity_text = "Aktivita"
+    if activities_map and source_sheet in activities_map:
+        activity_text = activities_map[source_sheet]
     else:
-        activity_text = ""
+        if activity_mode == "infer":
+            activity_text = _clean_activity_name(source_sheet)
+        elif activity_mode == "static":
+            activity_text = "Aktivita"
+        else:
+            activity_text = ""
 
+    # Edge case: empty source sheet -> remain as all-zero rows
     for i in range(31):
         row = raw_rows[i] if i < len(raw_rows) else []
         start_val = row[1] if len(row) > 1 else None
@@ -378,7 +526,20 @@ def transform_rows(raw_rows: List[List[Any]], source_sheet: str, activity_mode: 
         spolu_str = worked_str if spolu_val in (None, "", "-") else str(spolu_val)
 
         # Activity description priority: explicit desc if present else activity_text
-        final_activity = activity_text if activity_text and not desc_val else (desc_val or "")
+        # Activity precedence:
+        # 1. Explicit override via activities_map ALWAYS wins unless desc_val is substantive non-time text.
+        # 2. If no override: desc_val if present else inferred/static/blank.
+        override_txt = activities_map.get(source_sheet) if activities_map else None
+        def _looks_like_time_fragment(val: str) -> bool:
+            import re
+            return bool(re.fullmatch(r"\d{1,2}[:.]\d{2}(:\d{2})?", val.strip()) or re.fullmatch(r"\d+(\.\d+)?", val.strip()))
+        if override_txt:
+            if not desc_val or _looks_like_time_fragment(str(desc_val)):
+                final_activity = override_txt
+            else:
+                final_activity = desc_val
+        else:
+            final_activity = activity_text if activity_text and not desc_val else (desc_val or "")
 
         df.loc[i, :] = [
             df.loc[i, "Datum"],
@@ -413,6 +574,7 @@ def prepare_target_sheet(target_wb, target_sheet_name: str) -> Any:
     Clears rows DAILY_START_ROW .. DAILY_START_ROW+30 columns 1..14.
     Returns worksheet object.
     """
+    created = False
     if target_sheet_name not in target_wb.sheetnames:
         template_name = None
         for name in target_wb.sheetnames:
@@ -425,6 +587,7 @@ def prepare_target_sheet(target_wb, target_sheet_name: str) -> Any:
         new_ws = target_wb.copy_worksheet(template_ws)
         new_ws.title = target_sheet_name
         logging.info(f"Created new sheet '{target_sheet_name}' from template '{template_name}'")
+        created = True
     ws = target_wb[target_sheet_name]
 
     # Unmerge any merges overlapping data region (to avoid write errors)
@@ -439,7 +602,7 @@ def prepare_target_sheet(target_wb, target_sheet_name: str) -> Any:
         for c in range(1, 15):  # 1..14 inclusive
             ws.cell(row=r, column=c, value=None)
 
-    return ws
+    return ws, created
 
 
 # ------------------------------------
@@ -553,8 +716,26 @@ def main():  # noqa: D401
         logging.error(f"Failed during runtime mapping: {e}")
         raise SystemExit(1)
 
+    # Optional activities overrides (Phase 16 groundwork)
+    activities_overrides: Dict[str, str] | None = None
+    if getattr(args, "activities_json", None):
+        if os.path.exists(args.activities_json):
+            try:
+                with open(args.activities_json, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                # Accept either {sheet: text} or wrapper {"activities": {...}}
+                if isinstance(data, dict) and "activities" in data and isinstance(data["activities"], dict):
+                    activities_overrides = {k: str(v) for k, v in data["activities"].items()}
+                elif isinstance(data, dict):
+                    activities_overrides = {k: str(v) for k, v in data.items()}
+                logging.info(f"Loaded {len(activities_overrides)} activity override(s) from {args.activities_json}")
+            except Exception as e:
+                logging.warning(f"Failed loading activities JSON '{args.activities_json}': {e}")
+        else:
+            logging.warning(f"Activities JSON not found: {args.activities_json}")
+
     if args.save_mappings_json:
-        _save_mapping_json(mapping, unmatched_source, unmatched_target, args.output_dir, args.save_mappings_json)
+        _save_mapping_json(mapping, unmatched_source, unmatched_target, args.output_dir, args.save_mappings_json, activities_overrides)
 
     # Summary of mapping
     print("\n=== Runtime Sheet Mapping Summary ===")
@@ -590,40 +771,102 @@ def main():  # noqa: D401
 
     positive_mappings = {s: t for s, t in mapping.items() if s and t and t != '-'}
     summary_metrics = {}
-    for source_sheet, target_sheet in positive_mappings.items():
+
+    # Log skipped mappings explicitly
+    skipped = {s: t for s, t in mapping.items() if t == '-' or not t}
+    for s, t in skipped.items():
+        logging.info(f"Skipping mapping (no target): {s} -> {t}")
+
+    # Duplicate target detection (edge case handling)
+    target_occurrences: Dict[str, int] = {}
+    for src, tgt in positive_mappings.items():
+        target_occurrences[tgt] = target_occurrences.get(tgt, 0) + 1
+    duplicates = {t for t, c in target_occurrences.items() if c > 1}
+    if duplicates:
+        logging.warning(f"Duplicate target sheets detected: {sorted(list(duplicates))} -- subsequent duplicates will be skipped.")
+
+    def process_sheet(source_sheet: str, target_sheet: str) -> None:
+        """Extract, transform, write and summarize for one mapping."""
+        logging.info(f"--- START sheet '{source_sheet}' -> '{target_sheet}' ---")
+
         # Extraction
         sheet_args = build_sheet_extraction_args(source_sheet, extraction_cfg)
         raw_rows = extract_sheet_data(args.source_excel, source_sheet, sheet_args)
         extracted_counts[source_sheet] = len(raw_rows)
-        logging.info(f"Extracted {len(raw_rows)} row(s) from '{source_sheet}'")
+        logging.debug(f"Raw rows sample (first 2): {raw_rows[:2] if raw_rows else '[]'}")
 
         # Transformation
-        df_target = transform_rows(raw_rows, source_sheet, args.activity_mode, args.month, args.year)
+        df_target = transform_rows(
+            raw_rows,
+            source_sheet,
+            args.activity_mode,
+            args.month,
+            args.year,
+            activities_overrides,
+        )
         transformed_counts[source_sheet] = len(df_target)
 
         if args.dry_run:
-            logging.info(f"Dry-run: skipping write for sheet '{target_sheet}'")
-            continue
+            logging.info(
+                f"Dry-run: skipping write for '{target_sheet}' (transformed rows: {len(df_target)})"
+            )
+            logging.info(f"--- END sheet '{source_sheet}' (dry-run) ---")
+            return
 
         # Sheet preparation
-        ws = prepare_target_sheet(target_wb, target_sheet)
+        ws, created = prepare_target_sheet(target_wb, target_sheet)
+        if created:
+            logging.info(f"Sheet '{target_sheet}' created")
 
-    # Writing data rows
-    write_daily_rows(ws, df_target, DAILY_START_ROW)
+        # Writing data rows
+        write_daily_rows(ws, df_target, DAILY_START_ROW)
 
-    # Summary recalculation (phase 9)
-    metrics = recalculate_summary(df_target, ws)
-    summary_metrics[target_sheet] = metrics
+        # Summary recalculation (phase 9)
+        metrics = recalculate_summary(df_target, ws)
+        summary_metrics[target_sheet] = metrics
+        logging.info(
+            f"Summary results for '{target_sheet}': days={metrics['working_days']} total={metrics['total_hours']}"
+        )
+        logging.info(f"--- END sheet '{source_sheet}' -> '{target_sheet}' ---")
+
+    processed_targets: set[str] = set()
+    for source_sheet, target_sheet in positive_mappings.items():
+        if target_sheet in processed_targets and target_sheet in duplicates:
+            logging.info(f"Skipping '{source_sheet}' because target '{target_sheet}' already processed (duplicate target)")
+            continue
+        process_sheet(source_sheet, target_sheet)
+        processed_targets.add(target_sheet)
 
     # Save workbook if not dry-run
     if not args.dry_run:
+        # Primary save overwrite
         try:
             target_wb.save(effective_target)
-            logging.info(f"Workbook saved with updated daily rows: {effective_target}")
+            logging.info(f"Workbook saved: {effective_target}")
+        except PermissionError as e:
+            logging.warning(f"Primary save PermissionError: {e}; retrying in 1s...")
+            sleep(1)
+            try:
+                target_wb.save(effective_target)
+                logging.info(f"Workbook saved after retry: {effective_target}")
+            except PermissionError as e2:
+                logging.error(f"Workbook locked, aborting save: {e2}")
+                raise WorkbookLockedError(str(e2))
         except Exception as e:
-            logging.error(f"Error saving workbook '{effective_target}': {e}")
+            logging.error(f"Error saving primary workbook '{effective_target}': {e}")
+
+        # Secondary versioned copy
+        try:
+            version_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            os.makedirs(args.output_dir, exist_ok=True)
+            secondary_path = os.path.join(args.output_dir, f"updated_{version_ts}.xlsx")
+            # Re-open target to duplicate to maintain current memory state
+            target_wb.save(secondary_path)
+            logging.info(f"Versioned copy saved: {secondary_path}")
+        except Exception as e:
+            logging.warning(f"Could not create versioned copy: {e}")
     else:
-        logging.info("Dry-run: no workbook changes saved")
+        logging.info("Dry-run: no workbook changes saved (skipping primary & secondary outputs)")
 
     # Close workbooks
     try:
@@ -632,6 +875,19 @@ def main():  # noqa: D401
     except Exception:  # pragma: no cover
         pass
 
+    # Validation pass (only if not dry-run)
+    if not args.dry_run:
+        try:
+            reopened = load_workbook(effective_target, read_only=True)
+            missing_targets = [t for t in positive_mappings.values() if t not in reopened.sheetnames]
+            if missing_targets:
+                logging.warning(f"Validation: Missing target sheets after save: {missing_targets}")
+            else:
+                logging.info("Validation: All mapped target sheets present.")
+            reopened.close()
+        except Exception as e:
+            logging.warning(f"Validation open failed: {e}")
+
     # Report summary
     print("\n=== Processing Summary (Phases 5-8) ===")
     for sheet, count in extracted_counts.items():
@@ -639,6 +895,10 @@ def main():  # noqa: D401
         metrics = summary_metrics.get(tgt, {})
         metrics_str = f" | days={metrics.get('working_days')} total={metrics.get('total_hours')}" if metrics else ""
         print(f"{sheet}: extracted {count} row(s), transformed -> {transformed_counts.get(sheet)} rows (target){metrics_str}")
+
+    # Log unmatched at the very end (already printed earlier, but ensure requirement)
+    logging.info(f"Unmatched source sheets count: {len(unmatched_source)}")
+    logging.info(f"Unmatched target sheets count: {len(unmatched_target)}")
     if args.dry_run:
         print("\nDry-run completed (no modifications written).")
     else:
