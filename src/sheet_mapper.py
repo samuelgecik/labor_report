@@ -6,8 +6,8 @@ import json
 import os
 from datetime import date
 
-source_path = 'data/input/09I05-03-V04_Príloha č. 3 Pracovné výkazy_04-2025.xlsx'
-target_path = 'data/input/Dochádzka_JUL_2025_Perry_soft_.xlsx'
+source_path = 'data/input/Dochádzka_JUL_2025_Perry_soft_.xlsx'
+target_path = 'data/input/09I05-03-V04_Príloha č. 3 Pracovné výkazy_04-2025.xlsx'
 
 def extract_sheet_names(path):
     try:
