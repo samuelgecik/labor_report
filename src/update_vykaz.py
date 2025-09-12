@@ -195,13 +195,6 @@ def build_runtime_mapping(source_excel: str, target_excel: str, clean_target: bo
 
     mapping, unmatched_source, unmatched_target = sheet_mapper.create_mapping(source_sheets, target_sheets)
 
-    # Fallback: propose cleaned sheet names for unmatched sources so we can create new target sheets dynamically
-    for src_name, tgt in list(mapping.items()):
-        if tgt == '-' or not tgt:
-            proposed = get_sheet_name(src_name)
-            if proposed and proposed not in target_sheets:
-                mapping[src_name] = proposed  # will be created later if missing
-
     effective_target = target_excel
     if clean_target:
         logging.info("Clean-target flag active. Producing cleaned workbook copy via sheet_mapper...")
