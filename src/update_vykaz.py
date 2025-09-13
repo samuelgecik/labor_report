@@ -122,61 +122,54 @@ def source_to_target(df_source: pd.DataFrame, activity_text: str, work_location:
             dochadzka = '-'
             row = None
         
-        weekend_fields = ['Dochadzka_Prichod', 'Dochadzka_Odchod', 'Prestavka_min', 
-                         'Prerusenie_Odchod', 'Prerusenie_Prichod', 'Skutocny_Odpracovany_Cas']
+        # Compact template-based approach
+        templates = {
+            'vacation': {'Popis_Cinnosti': 'DOVOLENKA', 'Pocet_Odpracovanych_Hodin': '08:00:00', 'SPOLU': '08:00:00'},
+            'absent': {'Prestavka_Trvanie': '00:00:00'},
+            'weekend': {'Prestavka_Trvanie': '00:00:00'}
+        }
         
-        # Check if weekend (all fields are NaN or '-')
-        if (i < len(df_source) and row is not None and not pd.isna(row['Datum']) and 
-            all(pd.isna(row[col]) or str(row[col]).strip() == '-' for col in weekend_fields)):
-            # Weekend
-            df_target.loc[i, 'Cas_Vykonu_Od'] = ''
-            df_target.loc[i, 'Cas_Vykonu_Do'] = ''
-            df_target.loc[i, 'Prestavka_Trvanie'] = '00:00:00'
-            df_target.loc[i, 'Popis_Cinnosti'] = ''
-            df_target.loc[i, 'Pocet_Odpracovanych_Hodin'] = '00:00:00'
-            df_target.loc[i, 'Miesto_Vykonu'] = ''
-            df_target.loc[i, 'PH_Projekt_POO'] = '00:00:00'
-            df_target.loc[i, 'PH_Riesenie_POO'] = '00:00:00'
-            df_target.loc[i, 'PH_Mimo_Projekt_POO'] = '00:00:00'
-            df_target.loc[i, 'SPOLU'] = '00:00:00'
-            logging.info(f"Handled as weekend row {i}")
-        elif dochadzka == 'Dovolenka':
-            # Vacation
-            df_target.loc[i, 'Cas_Vykonu_Od'] = ''
-            df_target.loc[i, 'Cas_Vykonu_Do'] = ''
-            df_target.loc[i, 'Prestavka_Trvanie'] = ''
-            df_target.loc[i, 'Popis_Cinnosti'] = 'DOVOLENKA'
-            df_target.loc[i, 'Pocet_Odpracovanych_Hodin'] = '08:00:00'
-            df_target.loc[i, 'Miesto_Vykonu'] = ''
-            df_target.loc[i, 'PH_Projekt_POO'] = '00:00:00'
-            df_target.loc[i, 'PH_Riesenie_POO'] = '00:00:00'
-            df_target.loc[i, 'PH_Mimo_Projekt_POO'] = '00:00:00'
-            df_target.loc[i, 'SPOLU'] = '08:00:00'
-            logging.info(f"Vacation row {i}")
-        elif dochadzka == '-' or pd.isna(dochadzka):
-            # Absent
-            df_target.loc[i, 'Cas_Vykonu_Od'] = ''
-            df_target.loc[i, 'Cas_Vykonu_Do'] = ''
-            df_target.loc[i, 'Prestavka_Trvanie'] = '00:00:00'
-            df_target.loc[i, 'Popis_Cinnosti'] = ''
-            df_target.loc[i, 'Pocet_Odpracovanych_Hodin'] = '00:00:00'
-            df_target.loc[i, 'Miesto_Vykonu'] = ''
-            df_target.loc[i, 'PH_Projekt_POO'] = '00:00:00'
-            df_target.loc[i, 'PH_Riesenie_POO'] = '00:00:00'
-            df_target.loc[i, 'PH_Mimo_Projekt_POO'] = '00:00:00'
-            df_target.loc[i, 'SPOLU'] = '00:00:00'
+        # Set defaults for all non-work days
+        zero_fields = ['PH_Projekt_POO', 'PH_Riesenie_POO', 'PH_Mimo_Projekt_POO']
+        empty_fields = ['Cas_Vykonu_Od', 'Cas_Vykonu_Do', 'Miesto_Vykonu', 'Popis_Cinnosti']
+        
+        # Determine day type
+        if dochadzka == 'Dovolenka':
+            day_type = 'vacation'
+        elif (dochadzka == '-' or pd.isna(dochadzka) or 
+              (row is not None and not pd.isna(row['Datum']) and 
+               all(pd.isna(row[col]) or str(row[col]).strip() == '-' 
+                   for col in ['Dochadzka_Prichod', 'Dochadzka_Odchod', 'Prestavka_min', 
+                               'Prerusenie_Odchod', 'Prerusenie_Prichod', 'Skutocny_Odpracovany_Cas']))):
+            day_type = 'weekend' if (row is not None and not pd.isna(row['Datum'])) else 'absent'
         else:
-            # Work Day
+            day_type = 'work'
+        
+        if day_type != 'work':
+            # Apply non-work template
+            for field in zero_fields:
+                df_target.loc[i, field] = '00:00:00'
+            for field in empty_fields:
+                df_target.loc[i, field] = ''
+            df_target.loc[i, 'Pocet_Odpracovanych_Hodin'] = '00:00:00'
+            df_target.loc[i, 'SPOLU'] = '00:00:00'
+            # Apply specific template overrides
+            for field, value in templates.get(day_type, {}).items():
+                df_target.loc[i, field] = value
+            logging.info(f"Applied {day_type} template to row {i}")
+        else:
+            # Work day
+            worked_hours = row['Skutocny_Odpracovany_Cas']
             df_target.loc[i, 'Cas_Vykonu_Od'] = row['Dochadzka_Prichod']
             df_target.loc[i, 'Cas_Vykonu_Do'] = row['Dochadzka_Odchod']
             df_target.loc[i, 'Prestavka_Trvanie'] = get_prestavka(row)
             df_target.loc[i, 'Popis_Cinnosti'] = activity_text
-            df_target.loc[i, 'Pocet_Odpracovanych_Hodin'] = row['Skutocny_Odpracovany_Cas']
+            df_target.loc[i, 'Pocet_Odpracovanych_Hodin'] = worked_hours
             df_target.loc[i, 'Miesto_Vykonu'] = work_location
-            df_target.loc[i, 'PH_Projekt_POO'] = '00:00:00'
-            df_target.loc[i, 'PH_Riesenie_POO'] = '00:00:00'
-            df_target.loc[i, 'PH_Mimo_Projekt_POO'] = '00:00:00'
-            df_target.loc[i, 'SPOLU'] = df_target.loc[i, 'Pocet_Odpracovanych_Hodin']
+            for field in zero_fields:
+                df_target.loc[i, field] = '00:00:00'
+            df_target.loc[i, 'SPOLU'] = worked_hours
+            logging.info(f"Applied work template to row {i}")
     
     return df_target
 
