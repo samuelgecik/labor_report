@@ -16,8 +16,34 @@ from openpyxl import load_workbook
 
 # Strategy Registry for callable functions
 STRATEGY_REGISTRY = {
-    "source": {},
+    "source": {
+        # Perry Soft attendance workbook strategy
+        "perry_soft": {
+            "column_indices": [1, 2, 3, 4, 5, 6, 7],
+            "header_text": "Dátum",
+            "header_row_offset": 2,
+            "start_row_strategy": None,
+            "stop_condition": None
+        },
+        # Generic attendance strategy
+        "attendance_default": {
+            "column_indices": [1, 2, 3, 4, 5, 6, 7],
+            "header_text": "Dátum",
+            "header_row_offset": 1,
+            "start_row_strategy": None,
+            "stop_condition": None
+        }
+    },
     "target": {
+        # Labor report (vykaz) template strategy
+        "vykaz_template": {
+            "column_indices": [1, 2, 3, 4, [5, 6, 7, 8], 9, 10, 11, 12, 13, 14],
+            "start_row_strategy": lambda header_row: 26,  # fixed_26
+            "stop_condition": lambda row_data: len(row_data) > 4 and row_data[4] and "Spolu:" in str(row_data[4]),  # stop_for_spolu
+            "header_text": None,
+            "header_row_offset": 1
+        },
+        # Legacy support for individual strategy functions
         "fixed_26": lambda header_row: 26,
         "stop_for_spolu": lambda row_data: len(row_data) > 4 and row_data[4] and "Spolu:" in str(row_data[4])
     },
@@ -132,19 +158,19 @@ def extract_data(
 
 def extract_from_workbook(config: Dict[str, Any]) -> Dict[str, List[List[Any]]]:
     """
-    Extracts data from multiple sheets in a workbook based on configuration.
+    Extracts data from multiple sheets in a workbook based on configuration or strategy.
 
     Args:
         config: Dictionary containing extraction configuration with keys:
             - file_path: str - Path to the Excel file
             - sheets: str | list - Either "__ALL__" for all sheets,
                                     or a list of specific sheet names
-            - column_indices: List of column specifications
+            - strategy: str (optional) - Strategy name from STRATEGY_REGISTRY
+            - column_indices: List of column specifications (if not using strategy)
             - header_text: str (optional) - Text to search for header row
             - header_row_offset: int (optional) - Offset from header row to start data
             - start_row_strategy: str (optional) - Key into STRATEGY_REGISTRY
             - stop_condition: str (optional) - Key into STRATEGY_REGISTRY
-            - All other parameters supported by extract_data function
 
     Returns:
         Dict[str, List[List]]: Dictionary where keys are sheet names and values
@@ -153,7 +179,6 @@ def extract_from_workbook(config: Dict[str, Any]) -> Dict[str, List[List[Any]]]:
     results = {}
 
     # Load the workbook to get sheet names
-    from openpyxl import load_workbook
     wb = load_workbook(config['file_path'], read_only=True)
 
     # Determine which sheets to process
@@ -166,37 +191,88 @@ def extract_from_workbook(config: Dict[str, Any]) -> Dict[str, List[List[Any]]]:
         # Single sheet name
         sheets_to_process = [config['sheets']]
 
+    # Get strategy configuration if specified
+    strategy_name = config.get('strategy')
+    if strategy_name:
+        # Look for strategy in source or target registries
+        strategy_config = STRATEGY_REGISTRY.get('source', {}).get(strategy_name) or \
+                         STRATEGY_REGISTRY.get('target', {}).get(strategy_name)
+        if strategy_config and isinstance(strategy_config, dict):
+            # Merge strategy defaults with config overrides
+            merged_config = strategy_config.copy()
+            merged_config.update({k: v for k, v in config.items() 
+                                if k not in ['strategy', 'file_path', 'sheets']})
+        else:
+            merged_config = config
+    else:
+        merged_config = config
+
     # Process each sheet
     for sheet_name in sheets_to_process:
-        # Resolve strategy functions from registry
-        start_strategy = STRATEGY_REGISTRY.get(config.get('start_row_strategy'))
-        stop_condition = STRATEGY_REGISTRY.get(config.get('stop_condition'))
+        # Resolve strategy functions from registry (legacy support)
+        start_strategy_key = merged_config.get('start_row_strategy')
+        stop_condition_key = merged_config.get('stop_condition')
+        
+        start_strategy = None
+        stop_condition = None
+        
+        if isinstance(start_strategy_key, str):
+            start_strategy = STRATEGY_REGISTRY.get('target', {}).get(start_strategy_key)
+        elif callable(start_strategy_key):
+            start_strategy = start_strategy_key
+            
+        if isinstance(stop_condition_key, str):
+            stop_condition = STRATEGY_REGISTRY.get('target', {}).get(stop_condition_key)
+        elif callable(stop_condition_key):
+            stop_condition = stop_condition_key
 
         # Prepare the arguments for extract_data
         extract_args = {
             'file_path': config['file_path'],
-            'column_indices': config['column_indices'],
+            'column_indices': merged_config['column_indices'],
             'sheet_name': sheet_name
         }
 
         # Add optional parameters if provided
-        if 'header_text' in config:
-            extract_args['header_text'] = config['header_text']
-        if 'header_row_offset' in config:
-            extract_args['header_row_offset'] = config['header_row_offset']
+        if merged_config.get('header_text') is not None:
+            extract_args['header_text'] = merged_config['header_text']
+        if merged_config.get('header_row_offset') is not None:
+            extract_args['header_row_offset'] = merged_config['header_row_offset']
         if start_strategy:
             extract_args['start_row_strategy'] = start_strategy
         if stop_condition:
             extract_args['stop_condition'] = stop_condition
 
         # Extract data from this sheet
-        data = extract_data(**extract_args)
-
-        # Store the results
-        results[sheet_name] = data
+        try:
+            data = extract_data(**extract_args)
+            results[sheet_name] = data
+        except Exception as e:
+            logging.error(f"Failed to extract data from sheet '{sheet_name}': {e}")
+            results[sheet_name] = []
 
     wb.close()  # Close the readonly workbook
     return results
+
+
+def extract_whole_workbook(file_path: str, strategy: str = "perry_soft") -> Dict[str, List[List[Any]]]:
+    """
+    Extract data from all sheets in a workbook using a predefined strategy.
+    
+    Args:
+        file_path: Path to the Excel file
+        strategy: Strategy name from STRATEGY_REGISTRY ('perry_soft', 'attendance_default', 'vykaz_template')
+    
+    Returns:
+        Dict[str, List[List]]: Dictionary where keys are sheet names and values are extracted data
+    """
+    config = {
+        'file_path': file_path,
+        'sheets': "__ALL__",
+        'strategy': strategy
+    }
+    
+    return extract_from_workbook(config)
 
 
 def save_extraction_results(results: Dict[str, List[List[Any]]], config: Dict[str, Any]) -> None:
