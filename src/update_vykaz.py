@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def extract_source_data(source_excel: str) -> pd.DataFrame:
+def extract_source_data(source_excel: str, sheet_name: str = None) -> pd.DataFrame:
     """Extract source data from Excel file using extractor_utils."""
     # Use the source strategy directly from STRATEGY_REGISTRY
     from src.extractor_utils import STRATEGY_REGISTRY
@@ -43,7 +43,7 @@ def extract_source_data(source_excel: str) -> pd.DataFrame:
     source_strategy = STRATEGY_REGISTRY["source"]
     config = {
         'file_path': source_excel,
-        'sheets': "__ALL__",  # Extract from all sheets
+        'sheets': [sheet_name] if sheet_name else "__ALL__",  # Extract from specific sheet or all sheets
         'column_indices': source_strategy["column_indices"],
         'header_text': source_strategy["header_text"],
         'header_row_offset': source_strategy["header_row_offset"],
@@ -53,13 +53,16 @@ def extract_source_data(source_excel: str) -> pd.DataFrame:
     
     results = extract_from_workbook(config)
     
-    # For now, use the first sheet's data
+    # For now, use the first sheet's data (or specified sheet)
     if not results:
         raise ValueError(f"No data extracted from {source_excel}")
     
-    # Get the first sheet's data
-    sheet_name = list(results.keys())[0]
-    data = results[sheet_name]
+    # Get the target sheet's data
+    if sheet_name and sheet_name in results:
+        data = results[sheet_name]
+    else:
+        sheet_name = list(results.keys())[0]
+        data = results[sheet_name]
     
     # Convert to DataFrame with expected column names
     columns = ['Datum', 'Dochadzka_Prichod', 'Dochadzka_Odchod', 'Prestavka_min', 
@@ -174,26 +177,6 @@ def source_to_target(df_source: pd.DataFrame, activity_text: str, work_location:
     return df_target
 
 
-def load_target_excel(target_excel: str):
-    """Load target Excel file and find data structure."""
-    wb = load_workbook(target_excel)
-    ws = wb.active  # Use first sheet
-    
-    # Find data start row (looking for row with day numbers)
-    data_start_row = None
-    for row_num in range(20, 35):  # Common range for data start
-        cell_value = ws.cell(row=row_num, column=1).value
-        if cell_value and str(cell_value).strip() == '1.':
-            data_start_row = row_num
-            break
-    
-    if data_start_row is None:
-        logging.warning("Could not find data start row, using default row 26")
-        data_start_row = 26
-    
-    return wb, ws, None, data_start_row
-
-
 def update_daily_rows(ws, df_target: pd.DataFrame, data_start_row: int):
     """Update daily rows in the target worksheet."""
     col_mappings = {
@@ -288,7 +271,7 @@ def recalculate_summary(df_target: pd.DataFrame, ws):
     return f"{work_days} days, {total_time_str}", total_time_str
 
 
-def save_and_validate(wb, df_target: pd.DataFrame, backup_path: str, output_dir: str, dry_run: bool):
+def save_and_validate(wb, df_target: Optional[pd.DataFrame], backup_path: str, output_dir: str, dry_run: bool):
     """Save workbook and generate output files."""
     os.makedirs(output_dir, exist_ok=True)
     
@@ -305,10 +288,11 @@ def save_and_validate(wb, df_target: pd.DataFrame, backup_path: str, output_dir:
         wb.save(output_path)
         logging.info(f"Workbook saved to {output_path}")
         
-        # Save CSV for audit
-        csv_path = os.path.join(output_dir, f"transformed_data_{timestamp}.csv")
-        df_target.to_csv(csv_path, index=False)
-        logging.info(f"Transformed CSV saved to {csv_path}")
+        # Save CSV for audit only if df_target is provided
+        if df_target is not None:
+            csv_path = os.path.join(output_dir, f"transformed_data_{timestamp}.csv")
+            df_target.to_csv(csv_path, index=False)
+            logging.info(f"Transformed CSV saved to {csv_path}")
         
         wb.close()
         logging.info("Workbook closed successfully")
@@ -331,7 +315,26 @@ def main():
     try:
         logging.info("Starting vykaz update process")
         
-        # Create backup of target file
+        # Step 1: Create sheet mappings between source and target
+        logging.info("Creating sheet mappings...")
+        source_sheets = sheet_mapper.extract_sheet_names(args.source_excel)
+        source_sheets = sheet_mapper.filter_instruction_sheets(source_sheets)
+        target_sheets = sheet_mapper.extract_sheet_names(args.target_excel)
+        
+        if not source_sheets:
+            raise ValueError(f"Could not extract sheet names from source file: {args.source_excel}")
+        if not target_sheets:
+            raise ValueError(f"Could not extract sheet names from target file: {args.target_excel}")
+        
+        mapping, unmatched_source, unmatched_target = sheet_mapper.create_mapping(source_sheets, target_sheets)
+        logging.info(f"Created mappings for {len(mapping)} sheets")
+        
+        if unmatched_source:
+            logging.warning(f"Unmatched source sheets: {unmatched_source}")
+        if unmatched_target:
+            logging.warning(f"Unmatched target sheets: {unmatched_target}")
+        
+        # Step 2: Create backup of target file
         backup_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_dir = os.path.join(os.path.dirname(args.target_excel), 'backup')
         os.makedirs(backup_dir, exist_ok=True)
@@ -345,46 +348,75 @@ def main():
             if args.dry_run:
                 logging.info("Dry run: skipping backup creation")
         
-        # Step 1: Extract source data
-        logging.info("Extracting source data...")
-        df_source = extract_source_data(args.source_excel)
-        logging.info(f"Extracted {len(df_source)} rows from source")
-        
-        # Step 2: Transform data
-        logging.info("Transforming data...")
-        df_target = source_to_target(
-            df_source, 
-            args.activity_text, 
-            args.work_location
-        )
-        logging.info("Data transformation completed")
-        
-        # Step 3: Load target Excel
+        # Step 3: Load target workbook once
         logging.info("Loading target Excel...")
-        wb, ws, header_row, data_start_row = load_target_excel(args.target_excel)
-        logging.info(f"Target Excel loaded, data starts at row {data_start_row}")
+        wb = load_workbook(args.target_excel)
         
-        # Step 4: Update month if provided
-        if args.month:
+        # Step 4: Process each mapped sheet
+        processed_sheets = 0
+        for source_sheet, target_sheet in mapping.items():
+            if target_sheet == '-':
+                logging.info(f"Skipping unmapped source sheet: {source_sheet}")
+                continue
+                
+            logging.info(f"Processing sheet mapping: {source_sheet} -> {target_sheet}")
+            
             try:
-                ws['E13'] = args.month
-                logging.info(f"Updated cell E13 with month: {args.month}")
+                # Extract source data for this specific sheet
+                logging.info(f"Extracting source data from sheet: {source_sheet}")
+                df_source = extract_source_data(args.source_excel, source_sheet)
+                logging.info(f"Extracted {len(df_source)} rows from {source_sheet}")
+                
+                # Transform data
+                logging.info(f"Transforming data for sheet: {target_sheet}")
+                df_target = source_to_target(
+                    df_source, 
+                    args.activity_text, 
+                    args.work_location
+                )
+                logging.info("Data transformation completed")
+                
+                # Get target worksheet
+                if target_sheet not in wb.sheetnames:
+                    logging.error(f"Target sheet '{target_sheet}' not found in workbook")
+                    continue
+                    
+                ws = wb[target_sheet]
+                
+                # Find data start row using the target strategy
+                from src.extractor_utils import STRATEGY_REGISTRY
+                target_strategy = STRATEGY_REGISTRY["target"]
+                data_start_row = target_strategy["start_row_strategy"](None)  # Uses fixed row 26
+                logging.info(f"Using data start row: {data_start_row}")
+                
+                # Update month if provided
+                if args.month:
+                    try:
+                        ws['E13'] = args.month
+                        logging.info(f"Updated cell E13 with month: {args.month}")
+                    except Exception as e:
+                        logging.warning(f"Could not update month in E13: {e}")
+                
+                # Update daily rows
+                logging.info(f"Updating daily rows in sheet: {target_sheet}")
+                update_daily_rows(ws, df_target, data_start_row)
+                
+                # Recalculate summary
+                logging.info(f"Recalculating summary for sheet: {target_sheet}")
+                summary_text, total_time = recalculate_summary(df_target, ws)
+                logging.info(f"Summary for {target_sheet}: {summary_text}")
+                
+                processed_sheets += 1
+                
             except Exception as e:
-                logging.warning(f"Could not update month in E13: {e}")
+                logging.error(f"Error processing sheet {source_sheet} -> {target_sheet}: {e}")
+                continue
         
-        # Step 5: Update daily rows
-        logging.info("Updating daily rows...")
-        update_daily_rows(ws, df_target, data_start_row)
-        logging.info("Daily rows updated")
+        logging.info(f"Successfully processed {processed_sheets} sheets")
         
-        # Step 6: Recalculate summary
-        logging.info("Recalculating summary...")
-        summary_text, total_time = recalculate_summary(df_target, ws)
-        logging.info(f"Summary: {summary_text}")
-        
-        # Step 7: Save and validate
+        # Step 5: Save and validate
         logging.info("Saving workbook...")
-        save_and_validate(wb, df_target, backup_path, args.output_dir, args.dry_run)
+        save_and_validate(wb, None, backup_path, args.output_dir, args.dry_run)
         logging.info("Process completed successfully")
         
     except Exception as e:
