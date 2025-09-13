@@ -138,7 +138,7 @@ def build_runtime_mapping(source_excel: str, target_excel: str, clean_target: bo
     return mapping, unmatched_source, unmatched_target, effective_target
 
 
-# ---------------------------------------
+# ----------------------------- ----------
 # Phase 4: Extraction Configuration Logic
 # ---------------------------------------
 DEFAULT_EXTRACTION_CONFIG = {
@@ -248,16 +248,6 @@ TARGET_COLUMNS = [
     "PH_Mimo_Projekt_POO",
     "SPOLU",
 ]
-
-
-def _clean_activity_name(sheet_name: str) -> str:
-    # Reuse logic from sheet_mapper (remove titles, diacritics) if available
-    try:
-        norm = sheet_mapper._remove_titles(sheet_name)  # type: ignore
-    except AttributeError:  # fallback
-        norm = sheet_name
-    return norm.strip()
-
 
 def _parse_time(val: Any) -> time | None:
     if val in (None, "", "-"):
