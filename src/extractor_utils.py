@@ -4,16 +4,23 @@ Reusable utility functions for extracting data from Excel workbooks.
 This module now contains both:
  - Low-level extract_data implementation (migrated from src/extract.py)
  - Higher-level helpers (strategy registry, multi-sheet extraction, CSV saving)
+ - Workbook handling utilities (opening, backup creation)
 """
 
-from typing import Dict, List, Any, Union
+import os
+import logging
+from datetime import datetime
+from typing import Dict, List, Any, Union, Tuple
 from openpyxl import load_workbook
 
 
 # Strategy Registry for callable functions
 STRATEGY_REGISTRY = {
-    "fixed_26": lambda header_row: 26,
-    "stop_for_spolu": lambda row_data: len(row_data) > 4 and row_data[4] and "Spolu:" in str(row_data[4])
+    "source": {},
+    "target": {
+        "fixed_26": lambda header_row: 26,
+        "stop_for_spolu": lambda row_data: len(row_data) > 4 and row_data[4] and "Spolu:" in str(row_data[4])
+    },
 }
 
 
@@ -220,3 +227,33 @@ def save_extraction_results(results: Dict[str, List[List[Any]]], config: Dict[st
             if headers:
                 writer.writerow(headers)
             writer.writerows(data)
+
+
+def open_workbooks(source_excel: str, target_excel: str, backup_dir: str, dry_run: bool) -> Tuple[Any, Any, str | None]:
+    """Open source (read-only) and target (write) workbooks.
+
+    Creates timestamped backup of target (unless dry_run) under backup_dir.
+
+    Returns (source_wb, target_wb, backup_path)
+    """
+    if not os.path.exists(source_excel):
+        raise SystemExit(f"Source workbook not found: {source_excel}")
+    if not os.path.exists(target_excel):
+        raise SystemExit(f"Target workbook not found: {target_excel}")
+
+    source_wb = load_workbook(source_excel, read_only=True, data_only=True)
+    target_wb = load_workbook(target_excel)
+    backup_path = None
+
+    if not dry_run:
+        os.makedirs(backup_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"backup_{timestamp}.xlsx"
+        backup_path = os.path.join(backup_dir, backup_filename)
+        # Simple copy by saving a duplicate workbook object
+        target_wb.save(backup_path)
+        logging.info(f"Created backup of target workbook: {backup_path}")
+    else:
+        logging.info("Dry-run: skipping target backup creation")
+
+    return source_wb, target_wb, backup_path

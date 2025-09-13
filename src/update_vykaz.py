@@ -13,7 +13,7 @@ from src import sheet_mapper
 
 from openpyxl import load_workbook
 
-from src.extractor_utils import STRATEGY_REGISTRY, extract_data
+from src.extractor_utils import STRATEGY_REGISTRY, extract_data, open_workbooks
 
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -136,39 +136,6 @@ def build_runtime_mapping(source_excel: str, target_excel: str, clean_target: bo
     logging.info(f"Positive mappings: {len(pos_mappings)} | Unmatched source: {len(unmatched_source)} | Unmatched target: {len(unmatched_target)}")
 
     return mapping, unmatched_source, unmatched_target, effective_target
-
-
-# -----------------------------
-# Phase 3: Workbook Handling
-# -----------------------------
-def open_workbooks(source_excel: str, target_excel: str, backup_dir: str, dry_run: bool) -> Tuple[Any, Any, str | None]:
-    """Open source (read-only) and target (write) workbooks.
-
-    Creates timestamped backup of target (unless dry_run) under backup_dir.
-
-    Returns (source_wb, target_wb, backup_path)
-    """
-    if not os.path.exists(source_excel):
-        raise SystemExit(f"Source workbook not found: {source_excel}")
-    if not os.path.exists(target_excel):
-        raise SystemExit(f"Target workbook not found: {target_excel}")
-
-    source_wb = load_workbook(source_excel, read_only=True, data_only=True)
-    target_wb = load_workbook(target_excel)
-    backup_path = None
-
-    if not dry_run:
-        os.makedirs(backup_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_filename = f"backup_{timestamp}.xlsx"
-        backup_path = os.path.join(backup_dir, backup_filename)
-        # Simple copy by saving a duplicate workbook object
-        target_wb.save(backup_path)
-        logging.info(f"Created backup of target workbook: {backup_path}")
-    else:
-        logging.info("Dry-run: skipping target backup creation")
-
-    return source_wb, target_wb, backup_path
 
 
 # ---------------------------------------
