@@ -32,6 +32,10 @@ def parse_args() -> argparse.Namespace:
                        help="Run validation only; do not write changes")
     parser.add_argument("--output-dir", default="data/output", 
                        help="Directory for output files")
+    parser.add_argument("--no-clean-target", action="store_true", default=False,
+                       help="Skip removing unmatched target sheets")
+    parser.add_argument("--no-sort-target", action="store_true", default=False,
+                       help="Skip sorting target sheets based on source sheet order")
     return parser.parse_args()
 
 
@@ -334,14 +338,40 @@ def main():
         if unmatched_target:
             logging.warning(f"Unmatched target sheets: {unmatched_target}")
         
+        # Step 1.5: Clean target workbook by removing unmatched sheets
+        cleaned_target_path = args.target_excel
+        if not args.no_clean_target and unmatched_target:
+            logging.info("Cleaning target workbook by removing unmatched sheets...")
+            cleaned_target_path = sheet_mapper.remove_unmatched_target_sheets(args.target_excel, unmatched_target)
+            logging.info(f"Cleaned target file saved to: {cleaned_target_path}")
+        elif unmatched_target:
+            logging.info("Skipping target cleaning (disabled by --no-clean-target)")
+        
+        # Step 1.6: Sort target sheets based on source sheet order
+        target_file_to_process = cleaned_target_path
+        if not args.no_sort_target:
+            logging.info("Sorting target sheets based on source sheet order...")
+            sorted_target_path = sheet_mapper.sort_target_sheets_by_source_order(
+                args.source_excel, 
+                cleaned_target_path, 
+                mapping, 
+                save_sorted=True
+            )
+            if sorted_target_path:
+                logging.info(f"Sorted target workbook saved to: {sorted_target_path}")
+                # Use the sorted file as our target for processing
+                target_file_to_process = sorted_target_path
+        else:
+            logging.info("Skipping target sorting (disabled by --no-sort-target)")
+        
         # Step 2: Create backup of target file
         backup_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_dir = os.path.join(os.path.dirname(args.target_excel), 'backup')
+        backup_dir = os.path.join(os.path.dirname(target_file_to_process), 'backup')
         os.makedirs(backup_dir, exist_ok=True)
         backup_path = os.path.join(backup_dir, f"backup_{backup_timestamp}.xlsx")
         
-        if not args.dry_run and os.path.exists(args.target_excel):
-            shutil.copy(args.target_excel, backup_path)
+        if not args.dry_run and os.path.exists(target_file_to_process):
+            shutil.copy(target_file_to_process, backup_path)
             logging.info(f"Backup created: {backup_path}")
         else:
             backup_path = None
@@ -350,7 +380,7 @@ def main():
         
         # Step 3: Load target workbook once
         logging.info("Loading target Excel...")
-        wb = load_workbook(args.target_excel)
+        wb = load_workbook(target_file_to_process)
         
         # Step 4: Process each mapped sheet
         processed_sheets = 0
