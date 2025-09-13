@@ -17,35 +17,19 @@ from openpyxl import load_workbook
 # Strategy Registry for callable functions
 STRATEGY_REGISTRY = {
     "source": {
-        # Perry Soft attendance workbook strategy
-        "perry_soft": {
             "column_indices": [1, 2, 3, 4, 5, 6, 7],
             "header_text": "Dátum",
             "header_row_offset": 2,
             "start_row_strategy": None,
             "stop_condition": None
-        },
-        # Generic attendance strategy
-        "attendance_default": {
-            "column_indices": [1, 2, 3, 4, 5, 6, 7],
-            "header_text": "Dátum",
-            "header_row_offset": 1,
-            "start_row_strategy": None,
-            "stop_condition": None
-        }
+        
     },
     "target": {
-        # Labor report (vykaz) template strategy
-        "vykaz_template": {
             "column_indices": [1, 2, 3, 4, [5, 6, 7, 8], 9, 10, 11, 12, 13, 14],
             "start_row_strategy": lambda header_row: 26,  # fixed_26
             "stop_condition": lambda row_data: len(row_data) > 4 and row_data[4] and "Spolu:" in str(row_data[4]),  # stop_for_spolu
             "header_text": None,
             "header_row_offset": 1
-        },
-        # Legacy support for individual strategy functions
-        "fixed_26": lambda header_row: 26,
-        "stop_for_spolu": lambda row_data: len(row_data) > 4 and row_data[4] and "Spolu:" in str(row_data[4])
     },
 }
 
