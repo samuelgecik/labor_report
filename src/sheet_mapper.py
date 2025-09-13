@@ -6,9 +6,8 @@ import json
 import os
 from datetime import date
 
-source_path = 'data/input/Dochádzka_JUL_2025_Perry_soft_.xlsx'
-target_path = 'data/input/09I05-03-V04_Príloha č. 3 Pracovné výkazy_04-2025.xlsx'
-
+source_path = '/home/gobi/vykazy/data/input/source_test.xlsx'
+target_path = '/home/gobi/vykazy/data/output/updated_20250913_193959.xlsx'
 # Central list of instruction sheet names to exclude in mappings
 INSTRUCTION_SHEET_NAMES = {"Inštrukcie k vyplneniu PV", "Instrukcie k vyplneniu PV"}
 
@@ -94,6 +93,75 @@ def remove_unmatched_target_sheets(target_path, unmatched_target):
     wb.close()
     return cleaned_path
 
+def sort_target_sheets_by_source_order(source_path, target_path, mapping=None, save_sorted=True):
+    """Sort sheets in target workbook based on the order of sheets in source workbook.
+    
+    Args:
+        source_path: Path to source Excel file
+        target_path: Path to target Excel file
+        mapping: Optional mapping dict from create_mapping() function. If not provided,
+                it will be generated automatically.
+        save_sorted: If True, saves the sorted workbook with "_sorted" suffix
+        
+    Returns:
+        str: Path to the sorted workbook file if save_sorted=True, else None
+    """
+    try:
+        # Load both workbooks
+        source_wb = openpyxl.load_workbook(source_path)
+        target_wb = openpyxl.load_workbook(target_path)
+        
+        # Get sheet names from source (filtered)
+        source_sheets = filter_instruction_sheets(source_wb.sheetnames)
+        target_sheets = target_wb.sheetnames
+        
+        # Create mapping if not provided
+        if mapping is None:
+            mapping, _, _ = create_mapping(source_sheets, target_sheets)
+        
+        # Create ordered list of target sheets based on source order
+        ordered_target_sheets = []
+        unordered_sheets = list(target_sheets)  # Copy to track remaining sheets
+        
+        # First, add sheets in source order (if they exist in target)
+        for source_sheet in source_sheets:
+            target_sheet = mapping.get(source_sheet, '-')
+            if target_sheet != '-' and target_sheet in unordered_sheets:
+                ordered_target_sheets.append(target_sheet)
+                unordered_sheets.remove(target_sheet)
+        
+        # Add any remaining target sheets that weren't mapped
+        ordered_target_sheets.extend(unordered_sheets)
+        
+        # Reorder sheets in target workbook
+        # OpenPyxl doesn't have direct sheet reordering, so we need to move sheets
+        for i, sheet_name in enumerate(ordered_target_sheets):
+            if sheet_name in target_wb.sheetnames:
+                sheet = target_wb[sheet_name]
+                # Move sheet to the correct position
+                target_wb.move_sheet(sheet, offset=i - target_wb.index(sheet))
+        
+        source_wb.close()
+        
+        if save_sorted:
+            # Save sorted workbook
+            base, ext = os.path.splitext(target_path)
+            sorted_path = base + '_sorted' + ext
+            target_wb.save(sorted_path)
+            target_wb.close()
+            print(f"Sorted target workbook saved to: {sorted_path}")
+            return sorted_path
+        else:
+            target_wb.close()
+            return None
+            
+    except FileNotFoundError as e:
+        print(f"File not found: {e}")
+        return None
+    except Exception as e:
+        print(f"Error sorting sheets: {e}")
+        return None
+
 def save_mapping_json(mapping, unmatched_source, unmatched_target, output_dir, user_path, activities=None, metadata=None):
     """Save runtime mapping data to JSON file with activities and metadata.
 
@@ -140,6 +208,7 @@ if __name__ == "__main__":
     parser.add_argument('--source', default=source_path, help='Path to source Excel file')
     parser.add_argument('--target', default=target_path, help='Path to target Excel file')
     parser.add_argument('--clean-target', action='store_true', default=True, help='Remove unmatched target sheets and save cleaned file')
+    parser.add_argument('--sort-target', action='store_true', default=False, help='Sort target sheets based on source sheet order')
     args = parser.parse_args()
 
     source_sheets = extract_sheet_names(args.source)
@@ -166,6 +235,13 @@ if __name__ == "__main__":
         print("Unmatched target sheets:")
         for unmatched in unmatched_target:
             print(unmatched)
+    
+    # Handle sheet sorting if requested
+    if args.sort_target:
+        sorted_file = sort_target_sheets_by_source_order(args.source, args.target, mapping)
+        if sorted_file:
+            print(f"Target sheets sorted and saved to: {sorted_file}")
+    
     if args.clean_target and unmatched_target:
         cleaned_file = remove_unmatched_target_sheets(args.target, unmatched_target)
         print(f"Cleaned target file saved to {cleaned_file}")

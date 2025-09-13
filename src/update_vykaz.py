@@ -127,7 +127,7 @@ def source_to_target(df_source: pd.DataFrame, activity_text: str, work_location:
         
         # Compact template-based approach
         templates = {
-            'vacation': {'Popis_Cinnosti': 'DOVOLENKA', 'Pocet_Odpracovanych_Hodin': '08:00:00', 'SPOLU': '08:00:00'},
+            'vacation': {'Popis_Cinnosti': 'DOVOLENKA', 'Pocet_Odpracovanych_Hodin': {row['Skutocny_Odpracovany_Cas']}, 'SPOLU': {row['Skutocny_Odpracovany_Cas']}},
             'absent': {'Prestavka_Trvanie': '00:00:00'},
             'weekend': {'Prestavka_Trvanie': '00:00:00'}
         }
