@@ -64,15 +64,6 @@ def parse_filename(filename: str) -> dict:
     return result
 
 
-def get_sheet_name(raw_name: str) -> str:
-    """Normalize sheet/person name by removing titles."""
-    try:
-        cleaned = sheet_mapper._remove_titles(raw_name)  # type: ignore
-    except Exception:
-        cleaned = raw_name
-    return cleaned.strip()
-
-
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for the refactored workflow.
 
@@ -195,46 +186,49 @@ DEFAULT_EXTRACTION_CONFIG = {
 
 
 def load_extraction_config(path: str) -> Dict[str, Any]:
-    """Load YAML extraction config; fall back to DEFAULT_EXTRACTION_CONFIG if missing.
-
-    Expected YAML structure (example):
-      global:
-        column_indices: [1,2,3]
-        start_row_strategy: fixed_26
-      sheets:
-        "Some Sheet":
-          column_indices: [1,4,5]
+    """Load YAML extraction config; fall back to defaults if missing.
+    
+    Returns the raw config dict for direct use with extract_data via STRATEGY_REGISTRY.
+    Expected structure mirrors run_extractor.py approach - flat config per task/sheet.
     """
     if not path or not os.path.exists(path):
         logging.warning("Extraction config not found; using default inline config.")
-        return {"global": DEFAULT_EXTRACTION_CONFIG, "sheets": {}}
+        return {}
 
-    if yaml is None:
+    try:
+        import yaml
+    except ImportError:
         logging.warning("PyYAML not installed; cannot parse config. Using defaults.")
-        return {"global": DEFAULT_EXTRACTION_CONFIG, "sheets": {}}
+        return {}
 
     try:
         with open(path, "r", encoding="utf-8") as f:
-            raw_cfg = yaml.safe_load(f) or {}
-    except Exception as e:  # pragma: no cover
+            all_configs = yaml.safe_load(f) or {}
+        logging.info(f"Loaded extraction config from {path}")
+        return all_configs
+    except Exception as e:
         logging.error(f"Failed loading extraction config '{path}': {e}; using defaults")
-        return {"global": DEFAULT_EXTRACTION_CONFIG, "sheets": {}}
-
-    global_cfg = raw_cfg.get("global", {})
-    sheet_cfgs = raw_cfg.get("sheets", {})
-
-    # Merge defaults
-    merged_global = {**DEFAULT_EXTRACTION_CONFIG, **global_cfg}
-
-    return {"global": merged_global, "sheets": sheet_cfgs}
+        return {}
 
 
-def build_sheet_extraction_args(sheet_name: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Combine global + per-sheet overrides for a single sheet."""
-    per_sheet = cfg.get("sheets", {}).get(sheet_name, {})
-    merged = {**cfg.get("global", {}), **per_sheet}
-    merged["sheet_name"] = sheet_name
-    return merged
+def build_sheet_extraction_args(sheet_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    """Build extraction arguments for a sheet, merging defaults with sheet-specific config.
+    
+    Follows the extractor_utils.py pattern for configuration handling.
+    """
+    # Start with defaults
+    extraction_args = DEFAULT_EXTRACTION_CONFIG.copy()
+    
+    # Look for sheet-specific config or fall back to global
+    sheet_config = config.get(sheet_name, config.get("global", {}))
+    
+    # Merge sheet-specific overrides
+    extraction_args.update(sheet_config)
+    
+    # Always include the sheet name for extract_data
+    extraction_args["sheet_name"] = sheet_name
+    
+    return extraction_args
 
 
 # ------------------------------------
