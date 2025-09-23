@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", 
                        help="Run validation only; do not write changes")
     parser.add_argument("--output-dir", default="data/output", 
-                       help="Directory for output files")
+                           help="Directory to save outputs")
     parser.add_argument("--no-clean-target", action="store_true", default=False,
                        help="Skip removing unmatched target sheets")
     parser.add_argument("--no-sort-target", action="store_true", default=False,
@@ -349,28 +349,37 @@ def save_and_validate(wb, df_target: Optional[pd.DataFrame], backup_path: str, o
         logging.info("Dry run: skipping workbook save")
         wb.close()
         return
-    
+
     try:
         wb.save(output_path)
         logging.info(f"Workbook saved to {output_path}")
-        
+
         # Save CSV for audit only if df_target is provided
         if df_target is not None:
-            csv_path = os.path.join(output_dir, f"transformed_data_{timestamp}.csv")
+            # Ensure transformed CSV subdirectory exists and write CSVs there
+            transformed_dir = os.path.join(output_dir, 'transformed')
+            os.makedirs(transformed_dir, exist_ok=True)
+            csv_path = os.path.join(transformed_dir, f"transformed_data_{timestamp}.csv")
             df_target.to_csv(csv_path, index=False)
             logging.info(f"Transformed CSV saved to {csv_path}")
-        
+
         wb.close()
         logging.info("Workbook closed successfully")
-        
+
     except PermissionError as e:
         logging.error(f"Permission error saving workbook: {e}. Please close Excel file and retry.")
-        wb.close()
+        try:
+            wb.close()
+        except Exception:
+            pass
     except Exception as e:
         logging.error(f"Error saving workbook: {e}")
         if backup_path and os.path.exists(backup_path):
             logging.info(f"Backup available at: {backup_path}")
-        wb.close()
+        try:
+            wb.close()
+        except Exception:
+            pass
         raise
 
 
@@ -497,9 +506,10 @@ def main():
                 logging.info(f"Recalculating summary for sheet: {target_sheet}")
                 summary_text, total_time = recalculate_summary(df_target, ws)
                 logging.info(f"Summary for {target_sheet}: {summary_text}")
-                # Save transformed CSV for this sheet
+                # Save transformed CSV for this sheet into transformed subfolder
                 try:
-                    os.makedirs(args.output_dir, exist_ok=True)
+                    transformed_dir = os.path.join(args.output_dir, 'transformed')
+                    os.makedirs(transformed_dir, exist_ok=True)
                     def _normalize_df_times(df):
                         def _fix(v):
                             if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -517,7 +527,7 @@ def main():
                     csv_df = _normalize_df_times(df_target.copy())
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     safe_name = target_sheet.replace(' ', '_').replace('/', '_')
-                    csv_path = os.path.join(args.output_dir, f"transformed_{safe_name}_{ts}.csv")
+                    csv_path = os.path.join(transformed_dir, f"transformed_{safe_name}_{ts}.csv")
                     csv_df.to_csv(csv_path, index=False)
                     logging.info(f"Transformed CSV saved to {csv_path}")
                 except Exception as e:
