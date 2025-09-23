@@ -121,6 +121,52 @@ def source_to_target(df_source: pd.DataFrame, activity_text: str, work_location:
     if not activity_text:
         activity_text = "Pracovná činnosť"
     
+    def _sanitize_time(value):
+        """Ensure time values are in HH:MM:SS string format. Return empty string for invalid values."""
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return ''
+        # If it's a set containing a single string, unwrap it
+        if isinstance(value, set) and len(value) == 1:
+            value = next(iter(value))
+        # If it's a number (minutes), convert to HH:MM:SS
+        if isinstance(value, (int, float)) and not pd.isna(value):
+            try:
+                mins = int(value)
+                td = timedelta(minutes=mins)
+                hours = td.seconds // 3600
+                mins_part = (td.seconds % 3600) // 60
+                return f"{hours:02}:{mins_part:02}:00"
+            except Exception:
+                return ''
+        # If it's already a string, try to normalize common cases
+        if isinstance(value, str):
+            v = value.strip()
+            if v == '-' or v == '':
+                return ''
+            # Common already-HH:MM:SS
+            if ':' in v:
+                parts = v.split(':')
+                if len(parts) == 2:
+                    # mm:ss or hh:mm -> make hh:mm:00
+                    return f"{int(parts[0]):02}:{int(parts[1]):02}:00"
+                if len(parts) == 3:
+                    try:
+                        h, m, s = map(int, parts)
+                        return f"{h:02}:{m:02}:{s:02}"
+                    except Exception:
+                        return v
+            # Try parse as integer minutes string
+            if v.isdigit():
+                try:
+                    mins = int(v)
+                    td = timedelta(minutes=mins)
+                    hours = td.seconds // 3600
+                    mins_part = (td.seconds % 3600) // 60
+                    return f"{hours:02}:{mins_part:02}:00"
+                except Exception:
+                    return ''
+            return v
+
     for i in range(31):
         if i < len(df_source):
             row = df_source.iloc[i]
@@ -131,7 +177,7 @@ def source_to_target(df_source: pd.DataFrame, activity_text: str, work_location:
         
         # Compact template-based approach
         templates = {
-            'vacation': {'Popis_Cinnosti': 'DOVOLENKA', 'Pocet_Odpracovanych_Hodin': {row['Skutocny_Odpracovany_Cas']}, 'SPOLU': {row['Skutocny_Odpracovany_Cas']}},
+            'vacation': {'Popis_Cinnosti': 'DOVOLENKA', 'Pocet_Odpracovanych_Hodin': row['Skutocny_Odpracovany_Cas'] if row is not None else '00:00:00', 'SPOLU': row['Skutocny_Odpracovany_Cas'] if row is not None else '00:00:00'},
             'absent': {'Prestavka_Trvanie': '00:00:00'},
             'weekend': {'Prestavka_Trvanie': '00:00:00'}
         }
@@ -162,14 +208,18 @@ def source_to_target(df_source: pd.DataFrame, activity_text: str, work_location:
             df_target.loc[i, 'SPOLU'] = '00:00:00'
             # Apply specific template overrides
             for field, value in templates.get(day_type, {}).items():
-                df_target.loc[i, field] = value
+                # sanitize when setting template values
+                if field in ('Pocet_Odpracovanych_Hodin', 'SPOLU', 'Prestavka_Trvanie'):
+                    df_target.loc[i, field] = _sanitize_time(value)
+                else:
+                    df_target.loc[i, field] = value
             logging.info(f"Applied {day_type} template to row {i}")
         else:
             # Work day
             worked_hours = row['Skutocny_Odpracovany_Cas']
             df_target.loc[i, 'Cas_Vykonu_Od'] = row['Dochadzka_Prichod']
             df_target.loc[i, 'Cas_Vykonu_Do'] = row['Dochadzka_Odchod']
-            df_target.loc[i, 'Prestavka_Trvanie'] = get_prestavka(row)
+            df_target.loc[i, 'Prestavka_Trvanie'] = _sanitize_time(get_prestavka(row))
             df_target.loc[i, 'Popis_Cinnosti'] = activity_text
             df_target.loc[i, 'Pocet_Odpracovanych_Hodin'] = worked_hours
             df_target.loc[i, 'Miesto_Vykonu'] = work_location
@@ -217,6 +267,18 @@ def update_daily_rows(ws, df_target: pd.DataFrame, data_start_row: int):
             # Update cells
             for col_name, col_num in col_mappings.items():
                 val = df_target.iloc[i][col_name]
+                # sanitize time-like fields before writing to Excel
+                if col_name in ('Pocet_Odpracovanych_Hodin', 'Prestavka_Trvanie', 'PH_Projekt_POO', 'PH_Riesenie_POO', 'PH_Mimo_Projekt_POO', 'SPOLU'):
+                    # reuse the sanitizer defined in outer scope by calling a small inline function
+                    def _sanitize_for_write(v):
+                        if v is None or (isinstance(v, float) and pd.isna(v)):
+                            return ''
+                        if isinstance(v, set) and len(v) == 1:
+                            v = next(iter(v))
+                        if isinstance(v, str) and v.strip() == '-':
+                            return ''
+                        return v
+                    val = _sanitize_for_write(val)
                 if pd.isna(val) or val == '-':
                     val = ''
                 ws.cell(row=target_row, column=col_num, value=val)
@@ -247,7 +309,7 @@ def recalculate_summary(df_target: pd.DataFrame, ws):
     # Sum total hours
     total_td = timedelta()
     for value in df_target['SPOLU']:
-        if value not in (None, '00:00:00'):
+        if value not in (None, '00:00:00', ''):
             try:
                 h, m, s = map(int, str(value).split(':'))
                 total_td += timedelta(hours=h, minutes=m, seconds=s)
@@ -435,7 +497,32 @@ def main():
                 logging.info(f"Recalculating summary for sheet: {target_sheet}")
                 summary_text, total_time = recalculate_summary(df_target, ws)
                 logging.info(f"Summary for {target_sheet}: {summary_text}")
-                
+                # Save transformed CSV for this sheet
+                try:
+                    os.makedirs(args.output_dir, exist_ok=True)
+                    def _normalize_df_times(df):
+                        def _fix(v):
+                            if v is None or (isinstance(v, float) and pd.isna(v)):
+                                return ''
+                            if isinstance(v, set) and len(v) == 1:
+                                return next(iter(v))
+                            if isinstance(v, str) and v.strip() == '-':
+                                return ''
+                            return v
+                        for c in ['Pocet_Odpracovanych_Hodin','Prestavka_Trvanie','PH_Projekt_POO','PH_Riesenie_POO','PH_Mimo_Projekt_POO','SPOLU']:
+                            if c in df.columns:
+                                df[c] = df[c].apply(_fix).astype(str)
+                        return df
+
+                    csv_df = _normalize_df_times(df_target.copy())
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    safe_name = target_sheet.replace(' ', '_').replace('/', '_')
+                    csv_path = os.path.join(args.output_dir, f"transformed_{safe_name}_{ts}.csv")
+                    csv_df.to_csv(csv_path, index=False)
+                    logging.info(f"Transformed CSV saved to {csv_path}")
+                except Exception as e:
+                    logging.warning(f"Could not save transformed CSV for {target_sheet}: {e}")
+
                 processed_sheets += 1
                 
             except Exception as e:
