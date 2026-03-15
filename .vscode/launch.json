@@ -1,0 +1,45 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run update_vykaz (module)",
+            "type": "python",
+            "request": "launch",
+            "module": "src.update_vykaz",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--source-excel",
+                "data/input/source_test.xlsx",
+                "--target-excel",
+                "data/input/target_test.xlsx",
+                "--month",
+                "júl",
+                "--year",
+                "2025",
+                "--activity-text",
+                "Pracovná činnosť",
+                "--dry-run"
+            ],
+            "env": {
+                "VYKAZY_LOG_LEVEL": "INFO"
+            }
+        },
+        {
+            "name": "Attach to debugpy",
+            "type": "python",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678
+            },
+            "justMyCode": false,
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "${workspaceFolder}"
+                }
+            ]
+        }
+    ]
+}
