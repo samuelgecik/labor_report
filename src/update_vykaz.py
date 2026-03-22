@@ -1,4 +1,5 @@
 import argparse
+import calendar
 import shutil
 import os
 import logging
@@ -16,8 +17,10 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for updating labor report workbook."""
     parser = argparse.ArgumentParser(description="Update labor report workbook")
-    parser.add_argument("--source-excel", required=True, 
+    parser.add_argument("--source-excel", required=False, default=None,
                        help="Path to source attendance/work log Excel file")
+    parser.add_argument("--vacations-json", required=False, default=None,
+                       help="Path to vacations JSON file (used when no source-excel)")
     parser.add_argument("--target-excel", required=True, 
                        help="Path to target labor report Excel file")
     parser.add_argument("--month", type=str, default=None, 
@@ -231,6 +234,178 @@ def source_to_target(df_source: pd.DataFrame, activity_text: str, work_location:
     return df_target
 
 
+def generate_contractor_data(year: int, month: int, activity_text: str, work_location: str) -> pd.DataFrame:
+    """Generate a target DataFrame for a contractor with standard 8-hour shifts on business days.
+
+    Args:
+        year: Calendar year
+        month: Month number (1-12)
+        activity_text: Activity description text
+        work_location: Work location string
+
+    Returns:
+        DataFrame with 31 rows in the same format as source_to_target output.
+    """
+    cols = ['Datum', 'Cas_Vykonu_Od', 'Cas_Vykonu_Do', 'Prestavka_Trvanie',
+            'Popis_Cinnosti', 'Pocet_Odpracovanych_Hodin', 'Miesto_Vykonu',
+            'PH_Projekt_POO', 'PH_Riesenie_POO', 'PH_Mimo_Projekt_POO', 'SPOLU']
+
+    df = pd.DataFrame(columns=cols, index=range(31))
+    df['Datum'] = [str(i + 1) + '.' for i in range(31)]
+
+    if not activity_text:
+        activity_text = "Pracovná činnosť"
+
+    days_in_month = calendar.monthrange(year, month)[1]
+    zero_fields = ['PH_Projekt_POO', 'PH_Riesenie_POO', 'PH_Mimo_Projekt_POO']
+
+    for i in range(31):
+        day_num = i + 1
+        for field in zero_fields:
+            df.loc[i, field] = '00:00:00'
+
+        if day_num > days_in_month:
+            # Day doesn't exist in this month — treat as absent
+            df.loc[i, 'Cas_Vykonu_Od'] = ''
+            df.loc[i, 'Cas_Vykonu_Do'] = ''
+            df.loc[i, 'Prestavka_Trvanie'] = '00:00:00'
+            df.loc[i, 'Popis_Cinnosti'] = ''
+            df.loc[i, 'Pocet_Odpracovanych_Hodin'] = '00:00:00'
+            df.loc[i, 'Miesto_Vykonu'] = ''
+            df.loc[i, 'SPOLU'] = '00:00:00'
+            logging.info(f"Applied absent template to row {i} (day {day_num} beyond month)")
+            continue
+
+        weekday = calendar.weekday(year, month, day_num)  # 0=Mon, 6=Sun
+
+        if weekday >= 5:
+            # Weekend
+            df.loc[i, 'Cas_Vykonu_Od'] = ''
+            df.loc[i, 'Cas_Vykonu_Do'] = ''
+            df.loc[i, 'Prestavka_Trvanie'] = '00:00:00'
+            df.loc[i, 'Popis_Cinnosti'] = ''
+            df.loc[i, 'Pocet_Odpracovanych_Hodin'] = '00:00:00'
+            df.loc[i, 'Miesto_Vykonu'] = ''
+            df.loc[i, 'SPOLU'] = '00:00:00'
+            logging.info(f"Applied weekend template to row {i}")
+        else:
+            # Business day — standard 8-hour shift
+            df.loc[i, 'Cas_Vykonu_Od'] = '09:00:00'
+            df.loc[i, 'Cas_Vykonu_Do'] = '17:30:00'
+            df.loc[i, 'Prestavka_Trvanie'] = '00:30:00'
+            df.loc[i, 'Popis_Cinnosti'] = activity_text
+            df.loc[i, 'Pocet_Odpracovanych_Hodin'] = '08:00:00'
+            df.loc[i, 'Miesto_Vykonu'] = work_location
+            df.loc[i, 'SPOLU'] = '08:00:00'
+            logging.info(f"Applied contractor work template to row {i}")
+
+    return df
+
+
+def generate_data_with_vacations(year: int, month: int, activity_text: str,
+                                  work_location: str, vacation_days: List = None) -> pd.DataFrame:
+    """Generate target DataFrame with standard 8h shifts, applying vacation overrides.
+
+    Args:
+        year: Calendar year
+        month: Month number (1-12)
+        activity_text: Activity description text
+        work_location: Work location string
+        vacation_days: List of vacation entries from JSON — integers for full days,
+                       dicts with 'day' and 'half' keys for half-day vacations.
+
+    Returns:
+        DataFrame with 31 rows in the same format as source_to_target output.
+    """
+    # Start with standard contractor data (8h on business days)
+    df = generate_contractor_data(year, month, activity_text, work_location)
+
+    if not vacation_days:
+        return df
+
+    # Build lookup: day_num -> vacation type
+    # 'full' for full-day, 'morning'/'afternoon' for half-day (which half is vacation)
+    vac_lookup = {}
+    for entry in vacation_days:
+        if isinstance(entry, int):
+            vac_lookup[entry] = 'full'
+        elif isinstance(entry, dict):
+            vac_lookup[entry['day']] = entry['half']
+
+    days_in_month = calendar.monthrange(year, month)[1]
+
+    for day_num, vac_type in vac_lookup.items():
+        if day_num > days_in_month:
+            continue
+        i = day_num - 1  # row index
+
+        if vac_type == 'full':
+            # Full-day vacation
+            df.loc[i, 'Cas_Vykonu_Od'] = ''
+            df.loc[i, 'Cas_Vykonu_Do'] = ''
+            df.loc[i, 'Prestavka_Trvanie'] = '00:00:00'
+            df.loc[i, 'Popis_Cinnosti'] = 'DOVOLENKA'
+            df.loc[i, 'Pocet_Odpracovanych_Hodin'] = '08:00:00'
+            df.loc[i, 'Miesto_Vykonu'] = ''
+            df.loc[i, 'PH_Projekt_POO'] = '00:00:00'
+            df.loc[i, 'PH_Riesenie_POO'] = '00:00:00'
+            df.loc[i, 'PH_Mimo_Projekt_POO'] = '00:00:00'
+            df.loc[i, 'SPOLU'] = '08:00:00'
+            logging.info(f"Applied full-day vacation to day {day_num}")
+        elif vac_type == 'morning':
+            # Morning is vacation → work afternoon
+            df.loc[i, 'Cas_Vykonu_Od'] = '13:00:00'
+            df.loc[i, 'Cas_Vykonu_Do'] = '17:00:00'
+            df.loc[i, 'Prestavka_Trvanie'] = '00:00:00'
+            df.loc[i, 'Popis_Cinnosti'] = activity_text
+            df.loc[i, 'Pocet_Odpracovanych_Hodin'] = '04:00:00'
+            df.loc[i, 'Miesto_Vykonu'] = work_location
+            df.loc[i, 'PH_Projekt_POO'] = '00:00:00'
+            df.loc[i, 'PH_Riesenie_POO'] = '00:00:00'
+            df.loc[i, 'PH_Mimo_Projekt_POO'] = '00:00:00'
+            df.loc[i, 'SPOLU'] = '04:00:00'
+            logging.info(f"Applied morning-vacation (work afternoon) to day {day_num}")
+        elif vac_type == 'afternoon':
+            # Afternoon is vacation → work morning
+            df.loc[i, 'Cas_Vykonu_Od'] = '09:00:00'
+            df.loc[i, 'Cas_Vykonu_Do'] = '13:00:00'
+            df.loc[i, 'Prestavka_Trvanie'] = '00:00:00'
+            df.loc[i, 'Popis_Cinnosti'] = activity_text
+            df.loc[i, 'Pocet_Odpracovanych_Hodin'] = '04:00:00'
+            df.loc[i, 'Miesto_Vykonu'] = work_location
+            df.loc[i, 'PH_Projekt_POO'] = '00:00:00'
+            df.loc[i, 'PH_Riesenie_POO'] = '00:00:00'
+            df.loc[i, 'PH_Mimo_Projekt_POO'] = '00:00:00'
+            df.loc[i, 'SPOLU'] = '04:00:00'
+            logging.info(f"Applied afternoon-vacation (work morning) to day {day_num}")
+
+    return df
+
+
+def load_vacations(json_path: str) -> dict:
+    """Load vacation data from JSON file.
+
+    Returns:
+        Dict with keys: month, year, vacations (employee_name -> list of vacation entries)
+    """
+    import json
+    with open(json_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def match_vacation_to_sheet(sheet_name: str, vacations: dict) -> Optional[List]:
+    """Match a target sheet name to vacation entries using normalized name comparison.
+
+    Returns the vacation day list if matched, None otherwise.
+    """
+    from src.sheet_mapper import _normalize_name
+    norm_sheet = _normalize_name(sheet_name)
+    for emp_name, days in vacations.items():
+        if _normalize_name(emp_name) == norm_sheet:
+            return days
+    return None
+
+
 def update_daily_rows(ws, df_target: pd.DataFrame, data_start_row: int):
     """Update daily rows in the target worksheet."""
     col_mappings = {
@@ -386,61 +561,174 @@ def save_and_validate(wb, df_target: Optional[pd.DataFrame], backup_path: str, o
 def main():
     """Main function to orchestrate the update process."""
     args = parse_args()
-    
+
+    SLOVAK_MONTHS = {
+        'január': 1, 'február': 2, 'marec': 3, 'apríl': 4,
+        'máj': 5, 'jún': 6, 'júl': 7, 'august': 8,
+        'september': 9, 'október': 10, 'november': 11, 'december': 12
+    }
+
+    # Dispatch: vacations-only mode vs source-based mode
+    if args.vacations_json and not args.source_excel:
+        return _main_vacations_mode(args, SLOVAK_MONTHS)
+    elif args.source_excel:
+        return _main_source_mode(args, SLOVAK_MONTHS)
+    else:
+        raise ValueError("Either --source-excel or --vacations-json must be provided")
+
+
+def _main_vacations_mode(args, SLOVAK_MONTHS):
+    """Process all target sheets using vacation JSON (no source attendance file)."""
+    if not args.month or not args.year:
+        raise ValueError("--month and --year are required when using --vacations-json")
+
+    month_num = SLOVAK_MONTHS.get(args.month.lower())
+    if not month_num:
+        raise ValueError(f"Unknown month: '{args.month}'")
+
+    logging.info("Starting vykaz update (vacations-only mode)")
+
+    # Load vacation data
+    vac_data = load_vacations(args.vacations_json)
+    vacations = vac_data.get("vacations", {})
+    logging.info(f"Loaded vacations for {len(vacations)} employees")
+
+    # Load config for protected sheets
+    mappings_config = sheet_mapper.load_mappings_config()
+    protected_sheets = set(mappings_config.get("protected_sheets", []))
+
+    target_file_to_process = args.target_excel
+
+    # Create backup
+    backup_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_dir = os.path.join(os.path.dirname(target_file_to_process), 'backup')
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(backup_dir, f"backup_{backup_timestamp}.xlsx")
+
+    if not args.dry_run and os.path.exists(target_file_to_process):
+        shutil.copy(target_file_to_process, backup_path)
+        logging.info(f"Backup created: {backup_path}")
+    else:
+        backup_path = None
+
+    # Load target workbook
+    wb = load_workbook(target_file_to_process)
+    from src.extractor_utils import STRATEGY_REGISTRY
+    target_strategy = STRATEGY_REGISTRY["target"]
+    data_start_row = target_strategy["start_row_strategy"](None)
+
+    processed_sheets = 0
+    for sheet_name in wb.sheetnames:
+        if sheet_name.strip() in protected_sheets:
+            logging.info(f"Skipping protected sheet: {sheet_name}")
+            continue
+
+        # Match vacation days for this employee
+        vac_days = match_vacation_to_sheet(sheet_name, vacations)
+        if vac_days:
+            logging.info(f"Processing {sheet_name} with {len(vac_days)} vacation entries")
+        else:
+            logging.info(f"Processing {sheet_name} (no vacations)")
+
+        df = generate_data_with_vacations(
+            args.year, month_num, args.activity_text, args.work_location,
+            vacation_days=vac_days
+        )
+
+        ws = wb[sheet_name]
+
+        # Update month
+        if args.month:
+            try:
+                ws['E13'] = args.month
+            except Exception as e:
+                logging.warning(f"Could not update month in E13 for {sheet_name}: {e}")
+
+        update_daily_rows(ws, df, data_start_row)
+        summary_text, _ = recalculate_summary(df, ws)
+        logging.info(f"Summary for {sheet_name}: {summary_text}")
+
+        # Save transformed CSV
+        try:
+            transformed_dir = os.path.join(args.output_dir, 'transformed')
+            os.makedirs(transformed_dir, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_name = sheet_name.replace(' ', '_').replace('/', '_')
+            csv_path = os.path.join(transformed_dir, f"transformed_{safe_name}_{ts}.csv")
+            df.to_csv(csv_path, index=False)
+            logging.info(f"Transformed CSV saved to {csv_path}")
+        except Exception as e:
+            logging.warning(f"Could not save CSV for {sheet_name}: {e}")
+
+        processed_sheets += 1
+
+    logging.info(f"Total sheets processed: {processed_sheets}")
+    save_and_validate(wb, None, backup_path, args.output_dir, args.dry_run)
+    logging.info("Process completed successfully")
+
+
+def _main_source_mode(args, SLOVAK_MONTHS):
+    """Original source-based processing mode."""
     try:
         logging.info("Starting vykaz update process")
-        
+
         # Step 1: Create sheet mappings between source and target
         logging.info("Creating sheet mappings...")
         source_sheets = sheet_mapper.extract_sheet_names(args.source_excel)
         source_sheets = sheet_mapper.filter_instruction_sheets(source_sheets)
         target_sheets = sheet_mapper.extract_sheet_names(args.target_excel)
-        
+
         if not source_sheets:
             raise ValueError(f"Could not extract sheet names from source file: {args.source_excel}")
         if not target_sheets:
             raise ValueError(f"Could not extract sheet names from target file: {args.target_excel}")
-        
+
         mapping, unmatched_source, unmatched_target = sheet_mapper.create_mapping(source_sheets, target_sheets)
         logging.info(f"Created mappings for {len(mapping)} sheets")
-        
+
+        # Load config for protected sheets
+        mappings_config = sheet_mapper.load_mappings_config()
+        protected_sheets = mappings_config.get("protected_sheets", [])
+
         if unmatched_source:
             logging.warning(f"Unmatched source sheets: {unmatched_source}")
         if unmatched_target:
             logging.warning(f"Unmatched target sheets: {unmatched_target}")
-        
-        # Step 1.5: Clean target workbook by removing unmatched sheets
+
+        # Separate unmatched targets into contractors (to fill) and protected (to keep as-is)
+        contractor_names, protected_names = sheet_mapper.filter_protected_from_unmatched(
+            unmatched_target, protected_sheets
+        )
+        if contractor_names:
+            logging.info(f"Contractor sheets (will fill with 8h/day): {contractor_names}")
+        if protected_names:
+            logging.info(f"Protected sheets (kept as-is): {protected_names}")
+
+        # Step 1.5: No sheets are removed — contractors and protected are kept
         cleaned_target_path = args.target_excel
-        if not args.no_clean_target and unmatched_target:
-            logging.info("Cleaning target workbook by removing unmatched sheets...")
-            cleaned_target_path = sheet_mapper.remove_unmatched_target_sheets(args.target_excel, unmatched_target)
-            logging.info(f"Cleaned target file saved to: {cleaned_target_path}")
-        elif unmatched_target:
-            logging.info("Skipping target cleaning (disabled by --no-clean-target)")
-        
+
         # Step 1.6: Sort target sheets based on source sheet order
         target_file_to_process = cleaned_target_path
         if not args.no_sort_target:
             logging.info("Sorting target sheets based on source sheet order...")
             sorted_target_path = sheet_mapper.sort_target_sheets_by_source_order(
-                args.source_excel, 
-                cleaned_target_path, 
-                mapping, 
+                args.source_excel,
+                cleaned_target_path,
+                mapping,
                 save_sorted=True
             )
             if sorted_target_path:
                 logging.info(f"Sorted target workbook saved to: {sorted_target_path}")
-                # Use the sorted file as our target for processing
                 target_file_to_process = sorted_target_path
         else:
             logging.info("Skipping target sorting (disabled by --no-sort-target)")
-        
+
         # Step 2: Create backup of target file
         backup_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_dir = os.path.join(os.path.dirname(target_file_to_process), 'backup')
         os.makedirs(backup_dir, exist_ok=True)
         backup_path = os.path.join(backup_dir, f"backup_{backup_timestamp}.xlsx")
-        
+
         if not args.dry_run and os.path.exists(target_file_to_process):
             shutil.copy(target_file_to_process, backup_path)
             logging.info(f"Backup created: {backup_path}")
@@ -448,48 +736,48 @@ def main():
             backup_path = None
             if args.dry_run:
                 logging.info("Dry run: skipping backup creation")
-        
+
         # Step 3: Load target workbook once
         logging.info("Loading target Excel...")
         wb = load_workbook(target_file_to_process)
-        
+
         # Step 4: Process each mapped sheet
         processed_sheets = 0
         for source_sheet, target_sheet in mapping.items():
             if target_sheet == '-':
                 logging.info(f"Skipping unmapped source sheet: {source_sheet}")
                 continue
-                
+
             logging.info(f"Processing sheet mapping: {source_sheet} -> {target_sheet}")
-            
+
             try:
                 # Extract source data for this specific sheet
                 logging.info(f"Extracting source data from sheet: {source_sheet}")
                 df_source = extract_source_data(args.source_excel, source_sheet)
                 logging.info(f"Extracted {len(df_source)} rows from {source_sheet}")
-                
+
                 # Transform data
                 logging.info(f"Transforming data for sheet: {target_sheet}")
                 df_target = source_to_target(
-                    df_source, 
-                    args.activity_text, 
+                    df_source,
+                    args.activity_text,
                     args.work_location
                 )
                 logging.info("Data transformation completed")
-                
+
                 # Get target worksheet
                 if target_sheet not in wb.sheetnames:
                     logging.error(f"Target sheet '{target_sheet}' not found in workbook")
                     continue
-                    
+
                 ws = wb[target_sheet]
-                
+
                 # Find data start row using the target strategy
                 from src.extractor_utils import STRATEGY_REGISTRY
                 target_strategy = STRATEGY_REGISTRY["target"]
-                data_start_row = target_strategy["start_row_strategy"](None)  # Uses fixed row 26
+                data_start_row = target_strategy["start_row_strategy"](None)
                 logging.info(f"Using data start row: {data_start_row}")
-                
+
                 # Update month if provided
                 if args.month:
                     try:
@@ -497,11 +785,11 @@ def main():
                         logging.info(f"Updated cell E13 with month: {args.month}")
                     except Exception as e:
                         logging.warning(f"Could not update month in E13: {e}")
-                
+
                 # Update daily rows
                 logging.info(f"Updating daily rows in sheet: {target_sheet}")
                 update_daily_rows(ws, df_target, data_start_row)
-                
+
                 # Recalculate summary
                 logging.info(f"Recalculating summary for sheet: {target_sheet}")
                 summary_text, total_time = recalculate_summary(df_target, ws)
@@ -534,18 +822,68 @@ def main():
                     logging.warning(f"Could not save transformed CSV for {target_sheet}: {e}")
 
                 processed_sheets += 1
-                
+
             except Exception as e:
                 logging.error(f"Error processing sheet {source_sheet} -> {target_sheet}: {e}")
                 continue
-        
-        logging.info(f"Successfully processed {processed_sheets} sheets")
-        
+
+        logging.info(f"Successfully processed {processed_sheets} employee sheets")
+
+        # Step 4b: Process contractor sheets (unmatched targets that aren't protected)
+        if contractor_names and args.month and args.year:
+            month_num = SLOVAK_MONTHS.get(args.month.lower())
+            if not month_num:
+                logging.warning(f"Could not resolve month '{args.month}' — skipping contractors")
+            else:
+                logging.info(f"Processing {len(contractor_names)} contractor sheets...")
+                from src.extractor_utils import STRATEGY_REGISTRY
+                target_strategy = STRATEGY_REGISTRY["target"]
+
+                for contractor_sheet in contractor_names:
+                    if contractor_sheet not in wb.sheetnames:
+                        logging.warning(f"Contractor sheet '{contractor_sheet}' not found in workbook, skipping")
+                        continue
+
+                    logging.info(f"Processing contractor: {contractor_sheet}")
+                    df_contractor = generate_contractor_data(
+                        args.year, month_num, args.activity_text, args.work_location
+                    )
+
+                    ws = wb[contractor_sheet]
+                    data_start_row = target_strategy["start_row_strategy"](None)
+
+                    if args.month:
+                        try:
+                            ws['E13'] = args.month
+                        except Exception as e:
+                            logging.warning(f"Could not update month in E13: {e}")
+
+                    update_daily_rows(ws, df_contractor, data_start_row)
+                    summary_text, _ = recalculate_summary(df_contractor, ws)
+                    logging.info(f"Summary for contractor {contractor_sheet}: {summary_text}")
+
+                    try:
+                        transformed_dir = os.path.join(args.output_dir, 'transformed')
+                        os.makedirs(transformed_dir, exist_ok=True)
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        safe_name = contractor_sheet.replace(' ', '_').replace('/', '_')
+                        csv_path = os.path.join(transformed_dir, f"transformed_{safe_name}_{ts}.csv")
+                        df_contractor.to_csv(csv_path, index=False)
+                        logging.info(f"Transformed CSV saved to {csv_path}")
+                    except Exception as e:
+                        logging.warning(f"Could not save CSV for {contractor_sheet}: {e}")
+
+                    processed_sheets += 1
+        elif contractor_names:
+            logging.warning("Skipping contractors: --month and --year are required")
+
+        logging.info(f"Total sheets processed: {processed_sheets}")
+
         # Step 5: Save and validate
         logging.info("Saving workbook...")
         save_and_validate(wb, None, backup_path, args.output_dir, args.dry_run)
         logging.info("Process completed successfully")
-        
+
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         raise
