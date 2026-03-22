@@ -11,6 +11,45 @@ target_path = '/home/gobi/vykazy/data/output/updated_20250913_193959.xlsx'
 # Central list of instruction sheet names to exclude in mappings
 INSTRUCTION_SHEET_NAMES = {"Inštrukcie k vyplneniu PV", "Instrukcie k vyplneniu PV"}
 
+MAPPINGS_JSON_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'mappings.json')
+
+
+def load_mappings_config(path=None):
+    """Load the mappings.json config file.
+
+    Returns a dict with keys: protected_sheets, contractors, mappings, etc.
+    """
+    config_path = path or MAPPINGS_JSON_PATH
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def filter_protected_from_unmatched(unmatched_target, protected_sheets):
+    """Separate unmatched target sheets into contractors and protected.
+
+    Unmatched target sheets that are not protected are treated as contractors
+    (they stay in the workbook and get filled with standard work data).
+    Protected sheets stay as-is.
+
+    Args:
+        unmatched_target: List of strings like "Sheet Name -> -"
+        protected_sheets: List of sheet names to never remove or fill
+
+    Returns:
+        Tuple of (contractor_names, protected_names) — both are lists of sheet names.
+    """
+    keep_names_stripped = {n.strip() for n in (protected_sheets or [])}
+    contractors = []
+    protected = []
+    for entry in unmatched_target:
+        # Use rsplit to preserve the exact sheet name (may contain trailing spaces)
+        name = entry.rsplit(" -> -", 1)[0]
+        if name.strip() in keep_names_stripped:
+            protected.append(name)
+        else:
+            contractors.append(name)
+    return contractors, protected
+
 def extract_sheet_names(path):
     try:
         wb = openpyxl.load_workbook(path)
