@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MonthlyAttendance",
+  "description": "Monthly attendance overrides — tracks vacation days per employee",
+  "type": "object",
+  "required": ["month", "year", "vacations"],
+  "properties": {
+    "month": {
+      "type": "string",
+      "description": "Month name in Slovak (e.g. 'júl', 'september')"
+    },
+    "year": {
+      "type": "integer",
+      "description": "Calendar year"
+    },
+    "vacations": {
+      "type": "object",
+      "description": "Employee name → list of vacation entries",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 31,
+              "description": "Full-day vacation"
+            },
+            {
+              "type": "object",
+              "required": ["day", "half"],
+              "properties": {
+                "day": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 31
+                },
+                "half": {
+                  "type": "string",
+                  "enum": ["morning", "afternoon"],
+                  "description": "Which half is vacation (the other half is worked)"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      }
+    }
+  }
+}
