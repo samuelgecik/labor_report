@@ -3,7 +3,7 @@ import calendar
 import shutil
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, List, Tuple, Any, Optional
 import pandas as pd
 from openpyxl import load_workbook
@@ -234,6 +234,59 @@ def source_to_target(df_source: pd.DataFrame, activity_text: str, work_location:
     return df_target
 
 
+def _easter_sunday(year: int) -> date:
+    """Gregorian Easter Sunday (Anonymous/Meeus algorithm)."""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def slovak_days_of_rest(year: int, month: int) -> set:
+    """Return the day-numbers in (year, month) that are Slovak paid days of rest
+    (dni pracovného pokoja) — i.e. non-work days for timesheet generation.
+
+    Reflects the consolidation-package changes (grounded; see project memory
+    'slovak-days-of-rest'):
+      - Deň Ústavy (1 Sep) and Vznik ČSR (28 Oct): NOT a day of rest since 2024.
+      - Deň boja za slobodu (17 Nov): NOT a day of rest since 2025.
+      - Deň víťazstva (8 May) and Sedembolestná P. Márie (15 Sep): suspended for 2026.
+    Movable feasts (Veľký piatok, Veľkonočný pondelok) are derived from Easter.
+    """
+    fixed = {
+        (1, 1): True,             # Deň vzniku Slovenskej republiky
+        (1, 6): True,             # Zjavenie Pána (Traja králi)
+        (5, 1): True,             # Sviatok práce
+        (5, 8): year != 2026,     # Deň víťazstva nad fašizmom — suspended for 2026
+        (7, 5): True,             # Sviatok sv. Cyrila a Metoda
+        (8, 29): True,            # Výročie SNP
+        (9, 1): year < 2024,      # Deň Ústavy SR — working day since 2024
+        (9, 15): year != 2026,    # Sedembolestná Panna Mária — suspended for 2026
+        (10, 28): year < 2024,    # Vznik samostatného česko-slovenského štátu — working since 2024
+        (11, 1): True,            # Sviatok všetkých svätých
+        (11, 17): year < 2025,    # Deň boja za slobodu a demokraciu — working day since 2025
+        (12, 24): True,           # Štedrý deň
+        (12, 25): True,           # Prvý sviatok vianočný
+        (12, 26): True,           # Druhý sviatok vianočný
+    }
+    days = {d for (mo, d), is_rest in fixed.items() if mo == month and is_rest}
+
+    easter = _easter_sunday(year)
+    for offset in (-2, 1):  # Veľký piatok (Easter-2), Veľkonočný pondelok (Easter+1)
+        feast = easter + timedelta(days=offset)
+        if feast.month == month and feast.year == year:
+            days.add(feast.day)
+    return days
+
+
 def generate_contractor_data(year: int, month: int, activity_text: str, work_location: str) -> pd.DataFrame:
     """Generate a target DataFrame for a contractor with standard 8-hour shifts on business days.
 
@@ -257,6 +310,7 @@ def generate_contractor_data(year: int, month: int, activity_text: str, work_loc
         activity_text = "Pracovná činnosť"
 
     days_in_month = calendar.monthrange(year, month)[1]
+    rest_days = slovak_days_of_rest(year, month)
     zero_fields = ['PH_Projekt_POO', 'PH_Riesenie_POO', 'PH_Mimo_Projekt_POO']
 
     for i in range(31):
@@ -278,8 +332,8 @@ def generate_contractor_data(year: int, month: int, activity_text: str, work_loc
 
         weekday = calendar.weekday(year, month, day_num)  # 0=Mon, 6=Sun
 
-        if weekday >= 5:
-            # Weekend
+        if weekday >= 5 or day_num in rest_days:
+            # Weekend or Slovak public holiday (deň pracovného pokoja) — non-work
             df.loc[i, 'Cas_Vykonu_Od'] = ''
             df.loc[i, 'Cas_Vykonu_Do'] = ''
             df.loc[i, 'Prestavka_Trvanie'] = '00:00:00'
@@ -287,7 +341,8 @@ def generate_contractor_data(year: int, month: int, activity_text: str, work_loc
             df.loc[i, 'Pocet_Odpracovanych_Hodin'] = '00:00:00'
             df.loc[i, 'Miesto_Vykonu'] = ''
             df.loc[i, 'SPOLU'] = '00:00:00'
-            logging.info(f"Applied weekend template to row {i}")
+            label = 'weekend' if weekday >= 5 else 'holiday'
+            logging.info(f"Applied {label} template to row {i}")
         else:
             # Business day — standard 8-hour shift
             df.loc[i, 'Cas_Vykonu_Od'] = '09:00:00'
@@ -333,9 +388,14 @@ def generate_data_with_vacations(year: int, month: int, activity_text: str,
             vac_lookup[entry['day']] = entry['half']
 
     days_in_month = calendar.monthrange(year, month)[1]
+    rest_days = slovak_days_of_rest(year, month)
 
     for day_num, vac_type in vac_lookup.items():
         if day_num > days_in_month:
+            continue
+        if day_num in rest_days:
+            # A public holiday is a day off already — it is never recorded as vacation.
+            logging.info(f"Skipping vacation on day {day_num} (Slovak public holiday)")
             continue
         i = day_num - 1  # row index
 
