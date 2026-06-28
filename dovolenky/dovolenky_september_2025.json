@@ -1,0 +1,12 @@
+{
+  "month": "september",
+  "year": 2025,
+  "vacations": {
+    "Radoslava Hlaváčová": [26],
+    "Juraj Lapčák": [26],
+    "David Schmidt": [1],
+    "Šimon Sádecký": [26],
+    "Martin Jasovský": [{"day": 29, "half": "afternoon"}, 30]
+  }
+}
+

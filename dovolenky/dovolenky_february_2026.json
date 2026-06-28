@@ -1,0 +1,15 @@
+{
+  "month": "február",
+  "year": 2026,
+  "vacations": {
+    "David Schmidt": [
+      23
+    ],
+    "Simon Ronec": [
+      {
+        "day": 13,
+        "half": "afternoon"
+      }
+    ]
+  }
+}

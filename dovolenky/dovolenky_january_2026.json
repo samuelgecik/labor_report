@@ -1,0 +1,21 @@
+{
+  "month": "január",
+  "year": 2026,
+  "vacations": {
+    "David Schmidt": [
+      16,
+      19,
+      30
+    ],
+    "Juraj Lapčák": [
+      30
+    ],
+    "Radoslava Hlaváčová": [
+      26,
+      27,
+      28,
+      29,
+      30
+    ]
+  }
+}

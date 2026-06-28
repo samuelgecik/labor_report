@@ -1,0 +1,9 @@
+{
+  "month": "október",
+  "year": 2025,
+  "vacations": {
+    "Martin Gago": [17, 20],
+    "Juraj Lapčák": [{"day": 30, "half": "afternoon"}],
+    "David Schmidt": [6, 27]
+  }
+}

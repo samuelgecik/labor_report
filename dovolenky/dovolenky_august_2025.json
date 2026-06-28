@@ -1,0 +1,17 @@
+{
+  "month": "august",
+  "year": 2025,
+  "vacations": {
+    "Juraj Budai": [1, 4, 5, 6],
+    "Martin Jasovský": [4, 5, 6, 7, 8],
+    "Julia Korčoková": [{"day": 12, "half": "afternoon"}, 13, 14, 15, 18, 19, 20, 21, 22, 25, 26, 27, 28],
+    "Matej Holba": [18, 19, 20, 21, 22],
+    "Radoslava Hlaváčová": [25, 26, 27, 28],
+    "Juraj Lapčák": [25, 26, 27, 28],
+    "David Schmidt": [28],
+    "Michal Budai": [1, 4, 5],
+    "Linda Hantuchová": [18, 19],
+    "Anatoliy Kotsur": [15],
+    "Pavol Sabol": [{"day": 1, "half": "afternoon"}, {"day": 4, "half": "afternoon"}, {"day": 5, "half": "afternoon"}, {"day": 6, "half": "afternoon"}, {"day": 7, "half": "afternoon"}, {"day": 8, "half": "afternoon"}, 11, 12, 13, 14]
+  }
+}

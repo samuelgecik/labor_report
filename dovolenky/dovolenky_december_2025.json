@@ -1,0 +1,9 @@
+{
+  "month": "december",
+  "year": 2025,
+  "vacations": {
+    "Juraj Lapčák": [15],
+    "Šimon Sádecký": [15, 16],
+    "Radoslava Hlaváčová": [10, 11, 12, 15]
+  }
+}
